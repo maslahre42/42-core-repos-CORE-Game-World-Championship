@@ -10,12 +10,12 @@ void ft_on_tick(unsigned long tick)
 	t_obj *opp_core = ft_get_core_opponent();
 	t_obj **units = ft_get_units_own();
 
-	// 2. Run Carrier & Miner logistics FIRST so Phase 1 gem transfers to Core
-	//    are counted before the Spawner makes its Phase 5 creation decision!
+	// 2. Run Carrier & Miner logistics FIRST so gem transfers to Core
+	//    are counted before the Spawner makes creation decisions!
 	handle_carrier(core, units);
 	handle_miners(core, units);
 
-	// 3. Military Operations: Focus-fire Defenders, Hunters, and Squad Strikers
+	// 3. Military Operations: 3-Phase Tactical Combat with First-Strike Ambush
 	handle_combat(core, opp_core, units);
 
 	// 4. Spawner decision tree (uses current + newly transferred Core gems)

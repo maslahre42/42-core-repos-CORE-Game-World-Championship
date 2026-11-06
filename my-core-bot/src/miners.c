@@ -47,7 +47,7 @@ void handle_miners(t_obj *core, t_obj **units)
 			}
 		}
 
-		// 2. Fallback if no Carrier is active and Miner is holding substantial gems
+		// 2. Fallback if no Carrier is active: dynamic threshold prevents Core gem deadlock!
 		unsigned long solo_thresh = MINER_SOLO_RETURN_GEMS;
 		if (n_carriers == 0 && core->s_core.gems < COST_CARRIER)
 		{
