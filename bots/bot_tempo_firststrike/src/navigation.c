@@ -86,7 +86,7 @@ void add_pending_damage(unsigned long target_id, unsigned long dmg)
 	}
 }
 
-static unsigned long get_pending_unit_gems(unsigned long id)
+unsigned long get_pending_unit_gems(unsigned long id)
 {
 	for (unsigned int i = 0; i < g_unit_received_count; i++)
 	{
@@ -96,7 +96,7 @@ static unsigned long get_pending_unit_gems(unsigned long id)
 	return 0;
 }
 
-static void add_pending_unit_gems(unsigned long id, unsigned long amount)
+void add_pending_unit_gems(unsigned long id, unsigned long amount)
 {
 	for (unsigned int i = 0; i < g_unit_received_count; i++)
 	{
@@ -275,25 +275,23 @@ void __wrap_core_action_transferGems(const t_obj *source, t_pos target_pos, unsi
 	__real_core_action_transferGems(source, target_pos, amount);
 }
 
-static bool is_tile_threatened_by_enemy(t_pos pos)
+static unsigned int get_tile_enemy_danger(t_pos pos)
 {
-	const int dx[4] = {1, -1, 0, 0};
-	const int dy[4] = {0, 0, 1, -1};
-	for (int d = 0; d < 4; d++)
+	unsigned int danger = 0;
+	for (int i = 0; game.objects && game.objects[i]; i++)
 	{
-		int nx = (int)pos.x + dx[d];
-		int ny = (int)pos.y + dy[d];
-		if (nx < 0 || ny < 0 || nx >= (int)game.grid_size || ny >= (int)game.grid_size)
-			continue;
-		t_pos adj = {(unsigned short)nx, (unsigned short)ny};
-		t_obj *o = core_get_obj_from_pos(adj);
-		if (o && o->type == OBJ_UNIT && o->s_unit.team_id != game.my_team_id &&
-			o->s_unit.properties.damage_unit > 0)
+		t_obj *o = game.objects[i];
+		if (o->type == OBJ_UNIT && o->s_unit.team_id != game.my_team_id &&
+			o->s_unit.properties.damage_unit > 0 && o->hp > 0)
 		{
-			return true;
+			unsigned int d = ft_distance(pos, o->pos);
+			if (d <= 1)
+				danger += 500;
+			else if (d == 2)
+				danger += 20;
 		}
 	}
-	return false;
+	return danger;
 }
 
 t_tile_travelability safe_travelability(t_pos pos, const t_obj *unit)
@@ -312,9 +310,9 @@ t_tile_travelability safe_travelability(t_pos pos, const t_obj *unit)
 			return res;
 		}
 		// Unarmed units (Carriers, Miners, Speed Siegers) route around enemy melee range!
-		if (unit && unit->s_unit.properties.damage_unit == 0 && is_tile_threatened_by_enemy(pos))
+		if (unit && unit->s_unit.properties.damage_unit == 0)
 		{
-			res.weight = 25;
+			res.weight += get_tile_enemy_danger(pos);
 		}
 		return res;
 	}

@@ -52,6 +52,21 @@ t_obj *ft_get_threat_nearest(t_pos pos, unsigned int max_dist)
 	return NULL;
 }
 
+bool ft_is_pos_near_armed_enemy(t_pos pos, unsigned int radius)
+{
+	for (int i = 0; game.objects && game.objects[i]; i++)
+	{
+		t_obj *o = game.objects[i];
+		if (o->type == OBJ_UNIT && o->s_unit.team_id != game.my_team_id &&
+			o->s_unit.properties.damage_unit > 0 && o->hp > 0)
+		{
+			if (ft_distance(pos, o->pos) <= radius)
+				return true;
+		}
+	}
+	return false;
+}
+
 // Overkill-aware, focus-fire adjacent target selector
 t_obj *ft_get_best_adjacent_enemy(const t_obj *attacker)
 {
@@ -81,15 +96,13 @@ t_obj *ft_get_best_adjacent_enemy(const t_obj *attacker)
 
 		long score = 1000 - (long)(rem_hp * 30);
 
-		// Instant 1-hit kill priority: delete enemy unit before it can strike back!
 		if (eff_dmg >= rem_hp)
 			score += 800;
 
-		// High priority on fast/high-DPS enemy glass cannons
 		if (e->s_unit.properties.damage_unit > 0)
 		{
 			score += (long)(e->s_unit.properties.damage_unit * 60);
-			if (e->s_unit.properties.base_action_cooldown <= 2)
+			if (e->s_unit.properties.base_action_cooldown <= 3)
 				score += 250;
 		}
 
@@ -110,7 +123,17 @@ bool ft_is_core_threatened(t_obj *core, unsigned int radius)
 {
 	if (!core)
 		return false;
-	return (ft_get_threat_nearest(core->pos, radius) != NULL);
+	for (int i = 0; game.objects && game.objects[i]; i++)
+	{
+		t_obj *o = game.objects[i];
+		if (o->type == OBJ_UNIT && o->s_unit.team_id != game.my_team_id &&
+			(o->s_unit.properties.damage_unit > 0 || o->s_unit.properties.damage_core > 0))
+		{
+			if (ft_distance(core->pos, o->pos) <= radius)
+				return true;
+		}
+	}
+	return false;
 }
 
 unsigned int ft_count_active_resources(void)
@@ -121,6 +144,24 @@ unsigned int ft_count_active_resources(void)
 		t_obj *o = game.objects[i];
 		if (o->type == OBJ_DEPOSIT || o->type == OBJ_GEM_PILE)
 			count++;
+	}
+	return count;
+}
+
+unsigned int ft_count_safe_resources(t_pos core_pos)
+{
+	unsigned int count = 0;
+	t_obj *opp_core = ft_get_core_opponent();
+	for (int i = 0; game.objects && game.objects[i]; i++)
+	{
+		t_obj *o = game.objects[i];
+		if (o->type != OBJ_DEPOSIT && o->type != OBJ_GEM_PILE)
+			continue;
+		if (ft_is_pos_near_armed_enemy(o->pos, 3))
+			continue;
+		if (opp_core && ft_distance(o->pos, opp_core->pos) + 4 < ft_distance(o->pos, core_pos))
+			continue;
+		count++;
 	}
 	return count;
 }
@@ -138,6 +179,32 @@ unsigned int ft_count_enemy_combat_units(void)
 	return count;
 }
 
+unsigned int ft_count_own_combat_units(void)
+{
+	unsigned int count = 0;
+	t_obj **own = ft_get_units_own();
+	for (int i = 0; own && own[i]; i++)
+	{
+		if (own[i]->s_unit.properties.damage_unit > 0)
+			count++;
+	}
+	free(own);
+	return count;
+}
+
+unsigned long ft_get_enemy_max_hp(void)
+{
+	unsigned long max_hp = 0;
+	t_obj **opps = ft_get_units_opponent();
+	for (int i = 0; opps && opps[i]; i++)
+	{
+		if (opps[i]->s_unit.properties.damage_unit > 0 && opps[i]->hp > max_hp)
+			max_hp = opps[i]->hp;
+	}
+	free(opps);
+	return max_hp;
+}
+
 unsigned int ft_count_enemy_speed_warriors(void)
 {
 	unsigned int count = 0;
@@ -146,7 +213,7 @@ unsigned int ft_count_enemy_speed_warriors(void)
 	{
 		t_obj *e = opps[i];
 		if (e->s_unit.properties.damage_unit > 0 &&
-			(e->s_unit.properties.base_action_cooldown <= 2 || e->hp <= 6))
+			(e->s_unit.properties.base_action_cooldown <= 3 || e->hp <= 6))
 		{
 			count++;
 		}
@@ -155,7 +222,7 @@ unsigned int ft_count_enemy_speed_warriors(void)
 	return count;
 }
 
-// Checks if another friendly combat unit is already in melee (dist == 1) with this enemy
+// Checks if another friendly combat unit is already within distance <= 2 of this enemy (2v1 advantage!)
 bool ft_is_enemy_engaged_by_ally(const t_obj *enemy, unsigned long exclude_unit_id)
 {
 	if (!enemy)
@@ -165,51 +232,47 @@ bool ft_is_enemy_engaged_by_ally(const t_obj *enemy, unsigned long exclude_unit_
 		t_obj *o = game.objects[i];
 		if (o->type == OBJ_UNIT && o->s_unit.team_id == game.my_team_id && o->id != exclude_unit_id)
 		{
-			if (o->s_unit.properties.damage_unit > 0 && ft_is_adjacent(o->pos, enemy->pos))
+			if (o->s_unit.properties.damage_unit > 0 && ft_distance(o->pos, enemy->pos) <= 2)
 				return true;
 		}
 	}
 	return false;
 }
 
-// First-Strike Cooldown Micro:
-// If our unit is at Manhattan distance 2 from an armed enemy unit, should we HOLD position
-// and let the enemy step into distance 1 (forcing them onto cooldown so we strike first)?
+// Bounded Distance-2 First-Strike Ambush:
 bool ft_should_hold_for_first_strike(const t_obj *u, const t_obj *target)
 {
 	if (!u || !target || target->type != OBJ_UNIT)
 		return false;
 
-	// Only applies at the Distance-2 Ambush boundary
 	if (ft_distance(u->pos, target->pos) != 2)
 		return false;
 
-	// Never wait against unarmed units (Carriers, Miners, 0-unit-dmg Siegers) — rush them!
+	// Never wait against unarmed units
 	if (target->s_unit.properties.damage_unit == 0)
 		return false;
 
-	// If an ally is already at distance 1 fighting this enemy, step in immediately to 2v1!
+	// If an ally is also within distance <= 2 of this enemy, we have a 2v1 gang-up advantage:
+	// NEVER wait—both units collapse immediately and shred the enemy!
 	if (ft_is_enemy_engaged_by_ally(target, u->id))
+		return false;
+
+	// Bounded wait: if we have already waited 4+ ticks (action_cooldown <= -4), break the standoff and attack!
+	if (u->s_unit.action_cooldown <= -4)
 		return false;
 
 	long enemy_cd = target->s_unit.action_cooldown;
 	long my_base_cd = (long)u->s_unit.properties.base_action_cooldown;
 
-	// If enemy just acted and has a high cooldown (> my_base_cd), we can step to dist 1 NOW
-	// and our cooldown will still recover to 0 before theirs does!
-	if (enemy_cd > my_base_cd)
+	if (enemy_cd >= my_base_cd)
 		return false;
 
-	// If enemy is camping idle for a long time (enemy_cd <= -4), they aren't walking toward us
-	if (enemy_cd <= -4)
+	if (enemy_cd <= -5)
 		return false;
 
-	// Otherwise, enemy is ready or about to move (enemy_cd <= my_base_cd):
-	// Hold at distance 2 with our cooldown at 0 so when they step to distance 1, we hit FIRST!
 	return true;
 }
 
-// Estimates effective combat power of a team (accounting for HP, armor, unit/core DPS, and speed)
 static unsigned long estimate_team_power(unsigned long team_id, unsigned int *combat_count)
 {
 	unsigned long total_power = 0;
@@ -231,7 +294,7 @@ static unsigned long estimate_team_power(unsigned long team_id, unsigned int *co
 			? (unsigned long)o->s_unit.properties.base_action_cooldown : 1;
 		unsigned long armor_mult = 100 + (unsigned long)o->s_unit.properties.damage_reduction_percent;
 		unsigned long eff_hp = (o->hp * armor_mult) / 100;
-		unsigned long dps_score = ((dmg_u * 2 + dmg_c) * 6) / cd;
+		unsigned long dps_score = ((dmg_u * 3 + dmg_c) * 6) / cd;
 
 		total_power += eff_hp * 10 + dps_score * 15;
 	}
@@ -241,10 +304,6 @@ static unsigned long estimate_team_power(unsigned long team_id, unsigned int *co
 	return total_power;
 }
 
-// 3-Phase Strategic Brain:
-// Phase 1: Aggressive Expansion & Money Collection (while map has resources)
-// Phase 2: Tactical Defense / Posture (when resources run low, hold perimeter & build advantage)
-// Phase 3: Decisive All-Out Assault (when army power advantage or kill window is achieved)
 t_game_phase ft_get_game_phase(t_obj *core, t_obj *opp_core)
 {
 	if (!opp_core || opp_core->hp == 0)
@@ -256,21 +315,19 @@ t_game_phase ft_get_game_phase(t_obj *core, t_obj *opp_core)
 	unsigned long my_power = estimate_team_power(game.my_team_id, &my_combat_units);
 	unsigned long opp_power = estimate_team_power(opp_core->s_core.team_id, &opp_combat_units);
 
-	// Immediate Kill Window: if enemy Core is low HP or we have an overwhelming army lead, attack!
+	if (opp_combat_units == 0 && my_combat_units >= 1)
+		return PHASE_3_ALL_OUT_ASSAULT;
+
 	if (my_combat_units >= MIN_ASSAULT_ARMY_SIZE &&
-		(opp_combat_units == 0 || (my_power * 100 >= opp_power * ASSAULT_POWER_RATIO_PCT)))
+		(my_power * 100 >= opp_power * ASSAULT_POWER_RATIO_PCT))
 	{
 		return PHASE_3_ALL_OUT_ASSAULT;
 	}
 
-	// Phase 1: While resources remain on the map, play hyper-aggressive economy + map control
 	if (active_res > PHASE2_RESOURCE_CUTOFF)
 		return PHASE_1_AGGRESSIVE_ECONOMY;
 
-	// Resources are exhausted/scarce:
-	// If we still have banked gems to spawn more units OR enemy army is currently stronger,
-	// hold in Phase 2 Tactical Defense (force them to attack into our concave or win on HP tiebreaker!)
-	if (core && core->s_core.gems >= COST_SCOUT && my_combat_units < 12)
+	if (core && core->s_core.gems >= COST_HUNTER_TANK && my_combat_units < 10)
 		return PHASE_2_TACTICAL_DEFENSE;
 
 	if (my_power >= opp_power && my_combat_units >= 2)
@@ -298,10 +355,7 @@ static bool is_claimed_by_other_miner(t_pos res_pos, unsigned long my_id)
 
 t_obj *ft_get_resource_for_miner(t_pos unit_pos, t_pos core_pos, unsigned long unit_id)
 {
-	t_obj *pile = ft_get_gems_nearest(unit_pos);
-	if (pile && ft_distance(unit_pos, pile->pos) <= RES_PILE_NEAR_RADIUS)
-		return pile;
-
+	t_obj *opp_core = ft_get_core_opponent();
 	t_obj *best = NULL;
 	unsigned int best_score = UINT_MAX;
 
@@ -311,12 +365,21 @@ t_obj *ft_get_resource_for_miner(t_pos unit_pos, t_pos core_pos, unsigned long u
 		if (obj->type != OBJ_DEPOSIT && obj->type != OBJ_GEM_PILE)
 			continue;
 
+		// CRITICAL SAFETY FILTER (from Monir's miner.c):
+		// Never send a Miner to a resource guarded by an armed enemy within distance 3!
+		if (ft_is_pos_near_armed_enemy(obj->pos, 3))
+			continue;
+
 		unsigned int dist_u = ft_distance(unit_pos, obj->pos);
 		unsigned int dist_c = ft_distance(core_pos, obj->pos);
 		unsigned int score = dist_u * RES_DIST_UNIT_WEIGHT + dist_c * RES_DIST_CORE_WEIGHT;
 
-		if (obj->type == OBJ_GEM_PILE && score > 3)
-			score -= 3;
+		// Avoid deposits right next to the enemy Core in the early/mid game
+		if (opp_core && ft_distance(obj->pos, opp_core->pos) <= dist_c)
+			score += 80;
+
+		if (obj->type == OBJ_GEM_PILE && score > 4)
+			score -= 4;
 
 		if (is_claimed_by_other_miner(obj->pos, unit_id))
 			score += RES_CLAIMED_PENALTY;

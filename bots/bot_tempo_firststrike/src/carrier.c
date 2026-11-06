@@ -23,6 +23,13 @@ void handle_carrier(t_obj *core, t_obj **units)
 		unsigned long threshold = (game.elapsed_ticks < CARRIER_EARLY_TICKS)
 			? CARRIER_EARLY_THRESHOLD : CARRIER_MID_THRESHOLD;
 
+		// If our Core is close to affording a Brawler/Miner and we hold enough gems to finish it, deliver now!
+		if (carried >= 20 && core->s_core.gems < COST_BRAWLER_HEAVY &&
+			core->s_core.gems + carried >= COST_MINER)
+		{
+			threshold = 20;
+		}
+
 		// 1. Deliver to Core when holding profitable load
 		if (carried >= threshold || (carried > 0 && carried >= capacity))
 		{
@@ -35,7 +42,7 @@ void handle_carrier(t_obj *core, t_obj **units)
 			continue;
 		}
 
-		// 2. Meet friendly Miner with gems (Deconflicted across multiple Carriers!)
+		// 2. Meet friendly Miner with gems (only if Miner is not in immediate enemy melee!)
 		t_obj *best_miner = NULL;
 		long best_miner_score = -999999;
 
@@ -45,6 +52,8 @@ void handle_carrier(t_obj *core, t_obj **units)
 			if (!m->s_unit.name || strcmp(m->s_unit.name, "Miner") != 0)
 				continue;
 			if (m->s_unit.gems < CARRIER_MINER_PICKUP_MIN)
+				continue;
+			if (ft_is_pos_near_armed_enemy(m->pos, 2))
 				continue;
 
 			bool already_claimed = false;
@@ -79,14 +88,16 @@ void handle_carrier(t_obj *core, t_obj **units)
 			continue;
 		}
 
-		// 3. Scavenge free natural Gem Piles (Deconflicted across multiple Carriers!)
+		// 3. Scavenge SAFE natural Gem Piles (ignore piles guarded by armed enemies within dist <= 3!)
 		t_obj *best_pile = NULL;
-		unsigned int best_pile_dist = UINT_MAX;
+		unsigned int best_pile_score = UINT_MAX;
 
 		for (int k = 0; game.objects && game.objects[k]; k++)
 		{
 			t_obj *o = game.objects[k];
 			if (o->type != OBJ_GEM_PILE || get_pending_damage(o->id) >= o->hp)
+				continue;
+			if (ft_is_pos_near_armed_enemy(o->pos, 3))
 				continue;
 
 			bool already_claimed = false;
@@ -101,10 +112,10 @@ void handle_carrier(t_obj *core, t_obj **units)
 			if (already_claimed)
 				continue;
 
-			unsigned int d = ft_distance(u->pos, o->pos);
-			if (d < best_pile_dist)
+			unsigned int d = ft_distance(u->pos, o->pos) * 2 + ft_distance(core->pos, o->pos);
+			if (d < best_pile_score)
 			{
-				best_pile_dist = d;
+				best_pile_score = d;
 				best_pile = o;
 			}
 		}
@@ -133,7 +144,7 @@ void handle_carrier(t_obj *core, t_obj **units)
 			continue;
 		}
 
-		// 5. Never park idle on the Core's spawn pads!
+		// 5. Park safely at distance 2 from Core (never blocking distance-1 spawn pads)
 		step_away_from_core(u, core);
 	}
 }
