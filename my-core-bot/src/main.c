@@ -1,30 +1,32 @@
 #include "bot.h"
 
-void ft_on_tick(unsigned long tick);
+void ft_on_tick(unsigned long tick)
+{
+	(void)tick;
+	// 1. Clear tick-level movement reservations
+	reservations_init_tick();
+
+	t_obj *core = ft_get_core_own();
+	t_obj *opp_core = ft_get_core_opponent();
+	t_obj **units = ft_get_units_own();
+
+	// 2. Spawner decision tree
+	handle_spawner(core);
+
+	// 3. High-speed Carrier Logistics (2-tick cooldown relay)
+	handle_carrier(core, units);
+
+	// 4. On-Site Harvesters (Deposit mining + carrier transfer)
+	handle_miners(core, units);
+
+	// 5. Military Operations: Defenders, Unit Hunters, and Armored Strikers
+	handle_combat(core, opp_core, units);
+
+	if (units)
+		free(units);
+}
 
 int main(int argc, char **argv)
 {
 	return core_startGame("No_Plan_Just_Prayers", argc, argv, ft_on_tick, false);
-}
-
-void ft_on_tick(unsigned long tick)
-{
-	(void)tick;
-	core_action_createUnit("Warrior", "combat", NULL);
-
-	t_obj **units = ft_get_units_own();
-	t_obj *target = ft_get_core_opponent();
-	for (int i = 0; target && units && units[i]; i++)
-	{
-		if (units[i]->s_unit.action_cooldown <= 0)
-			core_action_travel(units[i], target->pos, NULL);
-		core_debug_addObjectInfo(
-			units[i],
-			"Heading for the opponent core! Use the addObjectInfo function to "
-			"add debug data to objects. Look at "
-			"the unit tooltip in the visualizer, there you can see this text "
-			"displayed for easy debugging!");
-	}
-
-	free(units);
 }

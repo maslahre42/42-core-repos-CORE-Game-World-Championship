@@ -7,3 +7,6 @@ old-logs/
 devpod
 
 replays/replay_latest.json
+
+# Local extracted core environment
+core_sys/
