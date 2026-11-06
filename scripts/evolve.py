@@ -251,6 +251,8 @@ def main():
     gauntlet = ["gridmaster/gridmaster", f"{HOF_DIR}/champion_gen0"]
     if os.path.exists(f"{HOF_DIR}/bot_beta"):
         gauntlet.append(f"{HOF_DIR}/bot_beta")
+    if os.path.exists(f"{HOF_DIR}/opponent_speed_brawler"):
+        gauntlet.append(f"{HOF_DIR}/opponent_speed_brawler")
 
     print("\n⚔️  Evaluating Baseline Genome against Gauntlet...")
     current_best_score, wins, matches, af = evaluate_candidate(gauntlet, rounds=args.matches_per_eval)
