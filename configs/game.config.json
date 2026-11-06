@@ -1,0 +1,263 @@
+{
+    "gridSize": 20,
+    "seed": "",
+    "idleIncome": 1,
+    "idleIncomeTimeOut": 350,
+    "maxUnitStandingCooldown": 12,
+    "depositHp": 30,
+    "depositIncome": 100,
+    "gemPileIncome": 25,
+    "coreHp": 99,
+    "initialGems": 200,
+    "wallHp": 42,
+    "worldGenerator": "jigsaw",
+    "worldGeneratorConfig": {
+        "templatePlaceAttemptCount": 5000,
+        "additionalWallPlaceAttemptCount": 50,
+        "depositCount": 36,
+        "gemPileCount": 16,
+        "minTemplateSpacing": 1,
+        "minCoreDistance": 5,
+        "depositAdditionalIncomePerAdjacentWall": 6,
+        "depositMultiplierIfFullySurrounded": 1.3,
+        "randomDepositIncomeVariation": 20,
+        "randomGemPileIncomeVariation": 8
+    },
+    "corePositions": [
+        {
+            "x": 0,
+            "y": 0
+        },
+        {
+            "x": 19,
+            "y": 19
+        }
+    ],
+    "components": {
+        "maxComponentsPerUnit": 6,
+        "unitDefaultCost": 42,
+        "unitDefaultProperties": {
+            "hp": 4,
+            "baseActionCooldown": 4,
+            "gemsPerCooldownStep": 16,
+            "maxGems": 16,
+            "damageReductionPercent": 0,
+            "damageCore": 0,
+            "damageUnit": 0,
+            "damageObject": 0,
+            "postSpawnCoreCooldown": 16
+        },
+        "components": [
+            {
+                "id": "health",
+                "properties": [
+                    {
+                        "name": "hp",
+                        "modification": 6
+                    },
+                    {
+                        "name": "postSpawnCoreCooldown",
+                        "modification": 3
+                    }
+                ],
+                "cost": 40,
+                "visualizer_asset_priority": 0,
+                "visualizer_asset_path": "heart"
+            },
+            {
+                "id": "speed",
+                "properties": [
+                    {
+                        "name": "baseActionCooldown",
+                        "modification": -2
+                    },
+                    {
+                        "name": "postSpawnCoreCooldown",
+                        "modification": 12
+                    }
+                ],
+                "cost": 55,
+                "visualizer_asset_priority": 0,
+                "visualizer_asset_path": "lightning"
+            },
+            {
+                "id": "armor",
+                "properties": [
+                    {
+                        "name": "damageReductionPercent",
+                        "modification": 30
+                    },
+                    {
+                        "name": "baseActionCooldown",
+                        "modification": 2
+                    },
+                    {
+                        "name": "postSpawnCoreCooldown",
+                        "modification": 4
+                    }
+                ],
+                "cost": 35,
+                "visualizer_asset_priority": 1,
+                "visualizer_asset_path": "shield"
+            },
+            {
+                "id": "combat",
+                "properties": [
+                    {
+                        "name": "damageUnit",
+                        "modification": 3
+                    },
+                    {
+                        "name": "baseActionCooldown",
+                        "modification": 3
+                    },
+                    {
+                        "name": "postSpawnCoreCooldown",
+                        "modification": 4
+                    }
+                ],
+                "cost": 35,
+                "visualizer_asset_priority": 2,
+                "visualizer_asset_path": "sword"
+            },
+            {
+                "id": "siege",
+                "properties": [
+                    {
+                        "name": "damageCore",
+                        "modification": 3
+                    },
+                    {
+                        "name": "baseActionCooldown",
+                        "modification": 3
+                    },
+                    {
+                        "name": "postSpawnCoreCooldown",
+                        "modification": 4
+                    }
+                ],
+                "cost": 35,
+                "visualizer_asset_priority": 3,
+                "visualizer_asset_path": "axe"
+            },
+            {
+                "id": "demolition",
+                "properties": [
+                    {
+                        "name": "damageObject",
+                        "modification": 3
+                    },
+                    {
+                        "name": "baseActionCooldown",
+                        "modification": 3
+                    },
+                    {
+                        "name": "postSpawnCoreCooldown",
+                        "modification": 4
+                    }
+                ],
+                "cost": 35,
+                "visualizer_asset_priority": 2,
+                "visualizer_asset_path": "pickaxe"
+            },
+            {
+                "id": "gem_speed",
+                "properties": [
+                    {
+                        "name": "gemsPerCooldownStep",
+                        "modification": 111
+                    },
+                    {
+                        "name": "hp",
+                        "modification": -2
+                    },
+					{
+						"name": "postSpawnCoreCooldown",
+						"modification": 2
+					}
+                ],
+                "cost": 40,
+                "visualizer_asset_priority": 1,
+                "visualizer_asset_path": "feather"
+            },
+            {
+                "id": "max_gems",
+                "properties": [
+                    {
+                        "name": "maxGems",
+                        "modification": 150
+                    },
+                    {
+                        "name": "hp",
+                        "modification": -1
+                    },
+					{
+						"name": "postSpawnCoreCooldown",
+						"modification": 2
+					}
+                ],
+                "cost": 40,
+                "visualizer_asset_priority": 0,
+                "visualizer_asset_path": "bag"
+            }
+        ],
+        "invalidConditions": [
+            {
+                "message": "Your baseActionCooldown must be more than or equal to all your damage properties (unit, core, object) added together.",
+                "condition": {
+                    "type": "less_than",
+                    "1": {
+                        "type": "property",
+                        "property": "baseActionCooldown"
+                    },
+                    "2": {
+                        "type": "sum",
+                        "1": {
+                            "type": "sum",
+                            "1": {
+                                "type": "property",
+                                "property": "damageUnit"
+                            },
+                            "2": {
+                                "type": "property",
+                                "property": "damageCore"
+                            }
+                        },
+                        "2": {
+                            "type": "property",
+                            "property": "damageObject"
+                        }
+                    }
+                }
+            },
+            {
+                "message": "You must have 1 or more hp.",
+                "condition": {
+                    "type": "less_than",
+                    "1": {
+                        "type": "property",
+                        "property": "hp"
+                    },
+                    "2": {
+                        "type": "const",
+                        "value": 1
+                    }
+                }
+            },
+            {
+                "message": "Your unit shall not have more than 3 armor components.",
+                "condition": {
+                    "type": "greater_than",
+                    "1": {
+                        "type": "component_count",
+                        "component": "armor"
+                    },
+                    "2": {
+                        "type": "const",
+                        "value": 3
+                    }
+                }
+            }
+        ]
+    }
+}
