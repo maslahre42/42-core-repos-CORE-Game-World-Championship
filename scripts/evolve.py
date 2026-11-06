@@ -325,6 +325,11 @@ def main():
 
             with open(BEST_GENOME_PATH, "w") as f:
                 json.dump(current_best_genome, f, indent=4)
+
+            # Re-baseline current_best_score against the newly strengthened gauntlet
+            # so a single lucky map spike against an older, weaker champion never freezes evolution!
+            current_best_score, _, _, _ = evaluate_candidate(gauntlet, rounds=args.matches_per_eval)
+            print(f"          Re-baselined Champion Score vs Updated Gauntlet: {current_best_score}")
         else:
             # Revert to best known genome
             write_genome(current_best_genome)

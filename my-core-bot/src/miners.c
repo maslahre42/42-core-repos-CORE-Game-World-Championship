@@ -48,7 +48,15 @@ void handle_miners(t_obj *core, t_obj **units)
 		}
 
 		// 2. Fallback if no Carrier is active and Miner is holding substantial gems
-		if (n_carriers == 0 && carried >= MINER_SOLO_RETURN_GEMS)
+		unsigned long solo_thresh = MINER_SOLO_RETURN_GEMS;
+		if (n_carriers == 0 && core->s_core.gems < COST_CARRIER)
+		{
+			unsigned long needed = COST_CARRIER - core->s_core.gems;
+			if (needed < solo_thresh)
+				solo_thresh = (needed < 15) ? 15 : needed;
+		}
+
+		if (n_carriers == 0 && carried >= solo_thresh)
 		{
 			if (ft_is_adjacent(u->pos, core->pos))
 			{

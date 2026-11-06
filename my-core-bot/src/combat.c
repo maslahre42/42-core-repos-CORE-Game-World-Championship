@@ -93,6 +93,12 @@ static void handle_hunter(t_obj *u, t_obj *core, t_obj *opp_core)
 		if (core && ft_distance(core->pos, e->pos) <= CORE_THREAT_RADIUS)
 			priority += HUNTER_CORE_THREAT_BOUNTY;
 
+		// Escort Breach Bonus: if we have Strikers alive, clear enemy units
+		// corking the tiles around the opponent's Core!
+		if (opp_core && core_get_units_byName_count("Striker") > 0 &&
+			ft_distance(e->pos, opp_core->pos) <= 2)
+			priority += 2500;
+
 		if (priority > best_priority)
 		{
 			best_priority = priority;
