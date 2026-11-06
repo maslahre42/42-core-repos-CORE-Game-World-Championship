@@ -10,3 +10,7 @@ replays/replay_latest.json
 
 # Local extracted core environment
 core_sys/
+
+# Hall of fame binaries
+hall_of_fame/*
+!hall_of_fame/best_genome.json

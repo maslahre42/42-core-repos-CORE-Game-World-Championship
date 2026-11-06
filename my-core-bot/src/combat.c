@@ -5,28 +5,23 @@ static void handle_defender(t_obj *u, t_obj *core, t_obj *opp_core)
 	if (!core)
 		return;
 
-	// 1. Attack adjacent enemy immediately
-	t_obj *adj_opp = ft_get_adjacent_enemy(u->pos);
+	t_obj *adj_opp = ft_get_best_adjacent_enemy(u);
 	if (adj_opp)
 	{
 		core_action_attack(u, adj_opp);
-		core_debug_addObjectInfo(u, "Defender striking adjacent enemy #%lu", adj_opp->id);
 		return;
 	}
 
-	// 2. Intercept any enemy within distance 7 of our Core
-	t_obj *threat = ft_get_threat_nearest(core->pos, 7);
+	t_obj *threat = ft_get_threat_nearest(core->pos, DEFENDER_INTERCEPT_RADIUS);
 	if (threat)
 	{
 		if (ft_is_adjacent(u->pos, threat->pos))
 			core_action_attack(u, threat);
 		else
 			safe_travel(u, threat->pos);
-		core_debug_addObjectInfo(u, "Defender intercepting threat at (%u, %u)", threat->pos.x, threat->pos.y);
 		return;
 	}
 
-	// 3. If opponent Core is dead, help sweep remaining enemy units
 	if (!opp_core || opp_core->hp == 0)
 	{
 		t_obj *opp = ft_get_units_opponent_nearest(u->pos);
@@ -40,7 +35,6 @@ static void handle_defender(t_obj *u, t_obj *core, t_obj *opp_core)
 		}
 	}
 
-	// 4. Anchor at defensive choke point (2 tiles from Core)
 	t_pos choke1 = core->pos;
 	t_pos choke2 = core->pos;
 	if (core->pos.x == 0 && core->pos.y == 0)
@@ -50,8 +44,10 @@ static void handle_defender(t_obj *u, t_obj *core, t_obj *opp_core)
 	}
 	else
 	{
-		choke1.x = core->pos.x - 2; choke1.y = core->pos.y;
-		choke2.x = core->pos.x; choke2.y = core->pos.y - 2;
+		choke1.x = (core->pos.x >= 2) ? core->pos.x - 2 : 0;
+		choke1.y = core->pos.y;
+		choke2.x = core->pos.x;
+		choke2.y = (core->pos.y >= 2) ? core->pos.y - 2 : 0;
 	}
 
 	t_pos choke = (u->id % 2 == 0) ? choke1 : choke2;
@@ -61,34 +57,41 @@ static void handle_defender(t_obj *u, t_obj *core, t_obj *opp_core)
 
 	if (ft_distance(u->pos, choke) > 0)
 		safe_travel(u, choke);
-	core_debug_addObjectInfo(u, "Defender guarding Core choke point");
 }
 
 static void handle_hunter(t_obj *u, t_obj *core, t_obj *opp_core)
 {
-	(void)core;
-	// 1. Attack adjacent enemy immediately
-	t_obj *adj_opp = ft_get_adjacent_enemy(u->pos);
+	t_obj *adj_opp = ft_get_best_adjacent_enemy(u);
 	if (adj_opp)
 	{
 		core_action_attack(u, adj_opp);
-		core_debug_addObjectInfo(u, "Hunter striking enemy #%lu for 6 DMG!", adj_opp->id);
 		return;
 	}
 
-	// 2. Hunt down closest enemy unit (prioritizing unarmed runners)
 	t_obj **opps = ft_get_units_opponent();
 	t_obj *best_target = NULL;
-	int best_priority = -1;
+	long best_priority = -999999;
 
 	for (int i = 0; opps && opps[i]; i++)
 	{
 		t_obj *e = opps[i];
-		int priority = 1000 - (int)ft_distance(u->pos, e->pos);
+		if (get_pending_damage(e->id) >= e->hp)
+			continue;
 
-		// Assassination bounty: prioritize unarmed enemy carriers
+		long priority = 1000 - (long)(ft_distance(u->pos, e->pos) * 15);
+		priority -= (long)(e->hp * HUNTER_LOW_HP_WEIGHT);
+
+		// High bounty on unarmed carriers/miners
 		if (e->s_unit.properties.damage_unit == 0 && e->s_unit.properties.damage_core == 0)
-			priority += 5000;
+			priority += HUNTER_UNARMED_BOUNTY;
+
+		// Bounty on enemies carrying gems
+		if (e->s_unit.gems > 0)
+			priority += HUNTER_GEM_CARRIER_BOUNTY;
+
+		// Urgent bounty on enemies threatening our Core
+		if (core && ft_distance(core->pos, e->pos) <= CORE_THREAT_RADIUS)
+			priority += HUNTER_CORE_THREAT_BOUNTY;
 
 		if (priority > best_priority)
 		{
@@ -104,11 +107,9 @@ static void handle_hunter(t_obj *u, t_obj *core, t_obj *opp_core)
 			core_action_attack(u, best_target);
 		else
 			safe_travel(u, best_target->pos);
-		core_debug_addObjectInfo(u, "Hunter tracking target #%lu", best_target->id);
 		return;
 	}
 
-	// 3. Fallback: attack opponent core if no enemy units remain
 	if (opp_core)
 	{
 		if (ft_is_adjacent(u->pos, opp_core->pos))
@@ -118,11 +119,8 @@ static void handle_hunter(t_obj *u, t_obj *core, t_obj *opp_core)
 	}
 }
 
-static void handle_striker(t_obj *u, t_obj *core, t_obj *opp_core)
+static void handle_striker(t_obj *u, t_obj *core, t_obj *opp_core, unsigned int n_strikers)
 {
-	(void)core;
-
-	// 1. If opponent core is destroyed, sweep and destroy remaining enemy units!
 	if (!opp_core || opp_core->hp == 0)
 	{
 		t_obj *opp_unit = ft_get_units_opponent_nearest(u->pos);
@@ -132,41 +130,66 @@ static void handle_striker(t_obj *u, t_obj *core, t_obj *opp_core)
 				core_action_attack(u, opp_unit);
 			else
 				safe_travel(u, opp_unit->pos);
-			core_debug_addObjectInfo(u, "Striker eliminating enemy unit #%lu", opp_unit->id);
 		}
 		return;
 	}
 
-	// 2. Win condition: attack opponent Core if adjacent
+	// 1. Attack opponent Core immediately if adjacent
 	if (ft_is_adjacent(u->pos, opp_core->pos))
 	{
 		core_action_attack(u, opp_core);
-		core_debug_addObjectInfo(u, "Striker battering opponent Core!");
 		return;
 	}
 
-	// 3. Clear adjacent enemy unit blocking our advance
-	t_obj *adj_opp = ft_get_adjacent_enemy(u->pos);
+	// 2. Focus-fire adjacent enemy unit blocking our advance
+	t_obj *adj_opp = ft_get_best_adjacent_enemy(u);
 	if (adj_opp)
 	{
 		core_action_attack(u, adj_opp);
-		core_debug_addObjectInfo(u, "Striker slashing adjacent enemy #%lu", adj_opp->id);
 		return;
 	}
 
-	// 4. March directly on opponent Core!
-	safe_travel(u, opp_core->pos);
-	core_debug_addObjectInfo(u, "Striker marching on opponent Core (%u, %u)", opp_core->pos.x, opp_core->pos.y);
+	// 3. Lanchester Squad Rally: if newly spawned near our Core and alone, rally briefly
+	if (core && n_strikers < SQUAD_RALLY_SIZE && ft_distance(u->pos, core->pos) <= SQUAD_RALLY_DIST)
+	{
+		t_obj *threat = ft_get_threat_nearest(core->pos, CORE_THREAT_RADIUS);
+		if (threat)
+		{
+			safe_travel(u, threat->pos);
+			return;
+		}
+	}
+
+	// 4. Dual-Slot Corner Core Routing (prevents single-file traffic jams at enemy Core)
+	t_pos slot_a = opp_core->pos;
+	t_pos slot_b = opp_core->pos;
+	if (opp_core->pos.x == 0 && opp_core->pos.y == 0)
+	{
+		slot_a.x = 1; slot_a.y = 0;
+		slot_b.x = 0; slot_b.y = 1;
+	}
+	else if (opp_core->pos.x > 0 && opp_core->pos.y > 0)
+	{
+		slot_a.x = opp_core->pos.x - 1; slot_a.y = opp_core->pos.y;
+		slot_b.x = opp_core->pos.x; slot_b.y = opp_core->pos.y - 1;
+	}
+
+	t_pos target_slot = (u->id % 2 == 0) ? slot_a : slot_b;
+	t_obj *occ = core_get_obj_from_pos(target_slot);
+	if (occ && occ->type == OBJ_UNIT && occ->s_unit.team_id == game.my_team_id && occ->id != u->id)
+		target_slot = (u->id % 2 == 0) ? slot_b : slot_a;
+
+	safe_travel(u, target_slot);
 }
 
 void handle_combat(t_obj *core, t_obj *opp_core, t_obj **units)
 {
+	unsigned int n_strikers = core_get_units_byName_count("Striker");
+
 	for (int i = 0; units && units[i]; i++)
 	{
 		t_obj *u = units[i];
-		if (!u->s_unit.name)
-			continue;
-		if (u->s_unit.action_cooldown > 0)
+		if (!u->s_unit.name || u->s_unit.action_cooldown > 0)
 			continue;
 
 		if (strcmp(u->s_unit.name, "Defender") == 0)
@@ -174,6 +197,6 @@ void handle_combat(t_obj *core, t_obj *opp_core, t_obj **units)
 		else if (strcmp(u->s_unit.name, "Hunter") == 0)
 			handle_hunter(u, core, opp_core);
 		else if (strcmp(u->s_unit.name, "Striker") == 0)
-			handle_striker(u, core, opp_core);
+			handle_striker(u, core, opp_core, n_strikers);
 	}
 }

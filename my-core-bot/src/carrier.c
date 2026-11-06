@@ -17,9 +17,10 @@ void handle_carrier(t_obj *core, t_obj **units)
 		unsigned long capacity = u->s_unit.properties.max_gems;
 
 		// 1. Deliver to Core when holding profitable load
-		// Early game: deliver even with 25 gems to fund the first miner immediately!
-		// Mid game: deliver with 50+ gems
-		unsigned long threshold = (game.elapsed_ticks < 200) ? 25 : 50;
+		// Early game: deliver early to fund the first miner immediately!
+		unsigned long threshold = (game.elapsed_ticks < CARRIER_EARLY_TICKS)
+									  ? CARRIER_EARLY_THRESHOLD
+									  : CARRIER_MID_THRESHOLD;
 
 		if (carried >= threshold || (carried > 0 && carried >= capacity))
 		{
@@ -50,7 +51,7 @@ void handle_carrier(t_obj *core, t_obj **units)
 			}
 		}
 
-		if (best_miner && max_miner_gems >= 15)
+		if (best_miner && max_miner_gems >= CARRIER_MINER_PICKUP_MIN)
 		{
 			if (ft_is_adjacent(u->pos, best_miner->pos))
 			{

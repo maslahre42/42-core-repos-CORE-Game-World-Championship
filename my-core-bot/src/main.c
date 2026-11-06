@@ -3,24 +3,23 @@
 void ft_on_tick(unsigned long tick)
 {
 	(void)tick;
-	// 1. Clear tick-level movement reservations
+	// 1. Clear tick-level movement reservations & overkill damage tables
 	reservations_init_tick();
 
 	t_obj *core = ft_get_core_own();
 	t_obj *opp_core = ft_get_core_opponent();
 	t_obj **units = ft_get_units_own();
 
-	// 2. Spawner decision tree
-	handle_spawner(core);
-
-	// 3. High-speed Carrier Logistics (2-tick cooldown relay)
+	// 2. Run Carrier & Miner logistics FIRST so Phase 1 gem transfers to Core
+	//    are counted before the Spawner makes its Phase 5 creation decision!
 	handle_carrier(core, units);
-
-	// 4. On-Site Harvesters (Deposit mining + carrier transfer)
 	handle_miners(core, units);
 
-	// 5. Military Operations: Defenders, Unit Hunters, and Armored Strikers
+	// 3. Military Operations: Focus-fire Defenders, Hunters, and Squad Strikers
 	handle_combat(core, opp_core, units);
+
+	// 4. Spawner decision tree (uses current + newly transferred Core gems)
+	handle_spawner(core);
 
 	if (units)
 		free(units);
