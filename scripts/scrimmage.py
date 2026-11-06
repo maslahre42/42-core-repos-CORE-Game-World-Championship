@@ -61,10 +61,12 @@ def main():
         sys.exit(1)
     duration = time.time() - t0
 
-    # Read bot1 logs for any action failures
+    # Read bot logs for any action failures
     bot1_log_res = run_in_container("cat /tmp/bot1.log")
     bot1_log = bot1_log_res.stdout
     action_failures_p1 = bot1_log.count("Action Failure")
+    bot2_log_res = run_in_container("cat /tmp/bot2.log")
+    action_failures_p2 = bot2_log_res.stdout.count("Action Failure")
 
     # Read replay
     replay_res = run_in_container("cat /workspace/replays/replay_latest.json")
@@ -83,20 +85,17 @@ def main():
         p1_result = next((r for r in results if r.get("id") == args.p1_id), {})
         p2_result = next((r for r in results if r.get("id") == args.p2_id), {})
 
-        winner_name = "Unknown"
         if p1_result.get("place") == 0:
-            winner_name = p1_result.get("name", "Player 1")
-            status_icon = "🏆 WIN"
+            winner_str = f"🏆 Bot 1 WON ({p1_result.get('name', 'P1')})"
         elif p2_result.get("place") == 0:
-            winner_name = p2_result.get("name", "Player 2")
-            status_icon = "❌ LOSS"
+            winner_str = f"🏆 Bot 2 WON ({p2_result.get('name', 'P2')})"
         else:
-            status_icon = "🤝 DRAW"
+            winner_str = "🤝 DRAW / TIMEOUT"
 
         print(f"\n================ MATCH SUMMARY ================")
-        print(f"Result:             {status_icon} ({winner_name})")
+        print(f"Result:             {winner_str}")
         print(f"Duration:           {full_ticks} ticks ({duration:.2f}s)")
-        print(f"P1 Action Failures: {action_failures_p1}")
+        print(f"Action Failures:    P1: {action_failures_p1} | P2: {action_failures_p2}")
         print(f"Total Gems Gained:  {stats.get('gems_gained', 0)}")
         print(f"Gems Transferred:   {stats.get('gems_transferred', 0)}")
         print(f"Deposits Destroyed: {stats.get('deposits_destroyed', 0)}")

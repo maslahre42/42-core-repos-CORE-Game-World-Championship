@@ -12,6 +12,10 @@ static unsigned long g_dmg_target_ids[MAX_TRACKED_TARGETS];
 static unsigned long g_dmg_amounts[MAX_TRACKED_TARGETS];
 static unsigned int g_dmg_count = 0;
 
+static unsigned long g_unit_received_ids[MAX_TRACKED_TARGETS];
+static unsigned long g_unit_received_gems[MAX_TRACKED_TARGETS];
+static unsigned int g_unit_received_count = 0;
+
 static unsigned long g_pending_core_gems = 0;
 
 bool is_pos_in_bounds(t_pos pos)
@@ -24,6 +28,7 @@ void reservations_init_tick(void)
 	memset(g_moved_to_tile, 0, sizeof(g_moved_to_tile));
 	g_acted_count = 0;
 	g_dmg_count = 0;
+	g_unit_received_count = 0;
 	g_pending_core_gems = 0;
 }
 
@@ -81,17 +86,113 @@ void add_pending_damage(unsigned long target_id, unsigned long dmg)
 	}
 }
 
+static unsigned long get_pending_unit_gems(unsigned long id)
+{
+	for (unsigned int i = 0; i < g_unit_received_count; i++)
+	{
+		if (g_unit_received_ids[i] == id)
+			return g_unit_received_gems[i];
+	}
+	return 0;
+}
+
+static void add_pending_unit_gems(unsigned long id, unsigned long amount)
+{
+	for (unsigned int i = 0; i < g_unit_received_count; i++)
+	{
+		if (g_unit_received_ids[i] == id)
+		{
+			g_unit_received_gems[i] += amount;
+			return;
+		}
+	}
+	if (g_unit_received_count < MAX_TRACKED_TARGETS)
+	{
+		g_unit_received_ids[g_unit_received_count] = id;
+		g_unit_received_gems[g_unit_received_count] = amount;
+		g_unit_received_count++;
+	}
+}
+
+static bool is_tile_occupied(t_pos pos)
+{
+	if (!is_pos_in_bounds(pos))
+		return true;
+	if (g_moved_to_tile[pos.x][pos.y])
+		return true;
+	if (core_get_obj_from_pos(pos) != NULL)
+		return true;
+	for (int i = 0; game.objects && game.objects[i]; i++)
+	{
+		t_obj *o = game.objects[i];
+		if (o->pos.x == pos.x && o->pos.y == pos.y && o->hp > 0)
+			return true;
+	}
+	return false;
+}
+
+bool has_free_spawn_tile(t_obj *core)
+{
+	if (!core)
+		return false;
+
+	const int dx[4] = {1, -1, 0, 0};
+	const int dy[4] = {0, 0, 1, -1};
+
+	for (int i = 0; i < 4; i++)
+	{
+		int nx = (int)core->pos.x + dx[i];
+		int ny = (int)core->pos.y + dy[i];
+		if (nx < 0 || ny < 0 || nx >= (int)game.grid_size || ny >= (int)game.grid_size)
+			continue;
+		t_pos p = {(unsigned short)nx, (unsigned short)ny};
+		if (!is_tile_occupied(p))
+			return true;
+	}
+	return false;
+}
+
+void step_away_from_core(const t_obj *u, t_obj *core)
+{
+	if (!u || !core || u->s_unit.action_cooldown > 0 || has_unit_acted(u->id))
+		return;
+	if (!ft_is_adjacent(u->pos, core->pos))
+		return;
+
+	const int dx[4] = {1, -1, 0, 0};
+	const int dy[4] = {0, 0, 1, -1};
+	unsigned int max_dist = ft_distance(u->pos, core->pos);
+	t_pos best_step = u->pos;
+	bool found = false;
+
+	for (int d = 0; d < 4; d++)
+	{
+		int nx = (int)u->pos.x + dx[d];
+		int ny = (int)u->pos.y + dy[d];
+		if (nx < 0 || ny < 0 || nx >= (int)game.grid_size || ny >= (int)game.grid_size)
+			continue;
+		t_pos np = {(unsigned short)nx, (unsigned short)ny};
+		if (is_tile_occupied(np))
+			continue;
+		unsigned int dist = ft_distance(np, core->pos);
+		if (dist > max_dist)
+		{
+			max_dist = dist;
+			best_step = np;
+			found = true;
+		}
+	}
+	if (found)
+		core_action_move(u, best_step);
+}
+
 void __wrap_core_action_move(const t_obj *unit, t_pos pos)
 {
 	if (!unit || unit->s_unit.action_cooldown > 0 || has_unit_acted(unit->id))
 		return;
 	if (!is_pos_in_bounds(pos) || !ft_is_adjacent(unit->pos, pos))
 		return;
-	if (g_moved_to_tile[pos.x][pos.y])
-		return;
-
-	t_obj *obj = core_get_obj_from_pos(pos);
-	if (obj)
+	if (is_tile_occupied(pos))
 		return;
 
 	g_moved_to_tile[pos.x][pos.y] = true;
@@ -108,15 +209,41 @@ void __wrap_core_action_attack(const t_obj *attacker, const t_obj *target)
 	if (!t || t->hp == 0 || !ft_is_adjacent(attacker->pos, t->pos))
 		return;
 
-	// Track damage dealt to enemy units so allies don't overkill dead targets
+	// Reject wasted zero-damage attacks that cause engine errors or cork paths
+	if (t->type == OBJ_CORE && attacker->s_unit.properties.damage_core == 0)
+		return;
+	if (t->type == OBJ_UNIT && attacker->s_unit.properties.damage_unit == 0)
+		return;
+	if ((t->type == OBJ_WALL || t->type == OBJ_DEPOSIT || t->type == OBJ_GEM_PILE) &&
+		attacker->s_unit.properties.damage_object == 0)
+		return;
+
+	// Universal overkill protection: if target will already be destroyed this tick, skip
+	if (t->hp <= get_pending_damage(t->id))
+		return;
+
+	// Track damage dealt to ALL attackable objects so allies don't attack dead targets
+	unsigned long raw_dmg = 0;
 	if (t->type == OBJ_UNIT && t->s_unit.team_id != game.my_team_id)
 	{
-		unsigned long raw_dmg = attacker->s_unit.properties.damage_unit;
+		raw_dmg = attacker->s_unit.properties.damage_unit;
 		int red = t->s_unit.properties.damage_reduction_percent;
 		unsigned long eff_dmg = (raw_dmg * (unsigned long)(100 - red)) / 100;
 		if (eff_dmg == 0 && raw_dmg > 0)
 			eff_dmg = 1;
 		add_pending_damage(t->id, eff_dmg);
+	}
+	else if (t->type == OBJ_GEM_PILE || t->type == OBJ_DEPOSIT || t->type == OBJ_WALL)
+	{
+		raw_dmg = attacker->s_unit.properties.damage_object;
+		if (raw_dmg > 0)
+			add_pending_damage(t->id, raw_dmg);
+	}
+	else if (t->type == OBJ_CORE && t->s_core.team_id != game.my_team_id)
+	{
+		raw_dmg = attacker->s_unit.properties.damage_core;
+		if (raw_dmg > 0)
+			add_pending_damage(t->id, raw_dmg);
 	}
 
 	mark_unit_acted(attacker->id);
@@ -135,11 +262,13 @@ void __wrap_core_action_transferGems(const t_obj *source, t_pos target_pos, unsi
 	{
 		unsigned long max_g = dest->s_unit.properties.max_gems;
 		unsigned long curr_g = dest->s_unit.gems;
-		if (curr_g >= max_g)
+		unsigned long pending = get_pending_unit_gems(dest->id);
+		if (curr_g + pending >= max_g)
 			return;
-		unsigned long space = max_g - curr_g;
+		unsigned long space = max_g - (curr_g + pending);
 		if (amount > space)
 			amount = space;
+		add_pending_unit_gems(dest->id, amount);
 	}
 	else if (dest && dest->type == OBJ_CORE && dest->s_core.team_id == game.my_team_id)
 	{
@@ -170,7 +299,6 @@ t_tile_travelability safe_travelability(t_pos pos, const t_obj *unit)
 
 	if (obj->type == OBJ_GEM_PILE)
 	{
-		// Gem piles are objects on tiles; attack them to scoop or route through
 		res.weight = 2;
 		res.action = CORE_TRAVEL_ATTACK;
 		return res;
@@ -251,7 +379,7 @@ void safe_travel(const t_obj *u, t_pos target)
 			if (nx < 0 || ny < 0 || nx >= (int)game.grid_size || ny >= (int)game.grid_size)
 				continue;
 			t_pos np = {(unsigned short)nx, (unsigned short)ny};
-			if (g_moved_to_tile[np.x][np.y] || core_get_obj_from_pos(np) != NULL)
+			if (is_tile_occupied(np))
 				continue;
 			unsigned int dist = ft_distance(np, target);
 			if (dist <= best_d)

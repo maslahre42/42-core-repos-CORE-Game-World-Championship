@@ -9,17 +9,22 @@
 #define MAX_TRACKED_TARGETS 512
 
 // Unit component costs
-#define COST_CARRIER 137       // base (42) + speed (55) + max_gems (40)
-#define COST_MINER 117         // base (42) + demolition (35) + max_gems (40)
-#define COST_DEFENDER 152      // base (42) + combat (35) + health (40) + armor (35)
-#define COST_HUNTER 152        // base (42) + combat (35) + combat (35) + health (40)
-#define COST_STRIKER 187       // base (42) + combat (35) + siege (35) + demolition (35) + health (40)
-#define COST_HEAVY_STRIKER 222 // base (42) + combat (35) + siege (35) + demolition (35) + health (40) + armor (35)
+#define COST_CARRIER 137          // base (42) + speed (55) + max_gems (40)
+#define COST_MINER 117            // base (42) + demolition (35) + max_gems (40)
+#define COST_DEFENDER 152         // base (42) + combat (35) + health (40) + armor (35)
+#define COST_HUNTER 152           // base (42) + combat (35) + combat (35) + health (40)
+#define COST_SPEED_HUNTER 227     // base (42) + combat (35) + speed (55) + speed (55) + health (40) [3-tick, 10 HP, 3 dmg]
+#define COST_STRIKER 187          // base (42) + combat (35) + siege (35) + demolition (35) + health (40)
+#define COST_HEAVY_STRIKER 222    // base (42) + combat (35) + siege (35) + demolition (35) + health (40) + armor (35)
+#define COST_SPEED_STRIKER 227    // base (42) + siege (35) + speed (55) + speed (55) + health (40) [3-tick, 10 HP, 3 siege]
+#define COST_BREACH_STRIKER 262   // base (42) + siege (35) + demolition (35) + speed (55) + speed (55) + health (40) [6-tick, 10 HP]
 
 // Spatial & distance helpers
 unsigned int ft_distance(t_pos a, t_pos b);
 bool ft_is_adjacent(t_pos a, t_pos b);
 bool is_pos_in_bounds(t_pos pos);
+bool has_free_spawn_tile(t_obj *core);
+void step_away_from_core(const t_obj *u, t_obj *core);
 
 // Tile reservations, overkill tracking & collision-free navigation
 void reservations_init_tick(void);
@@ -43,6 +48,9 @@ t_obj *ft_get_best_adjacent_enemy(const t_obj *attacker);
 bool ft_is_core_threatened(t_obj *core, unsigned int radius);
 unsigned int ft_count_active_resources(void);
 unsigned int ft_count_enemy_combat_units(void);
+unsigned int ft_count_enemy_speed_warriors(void);
+unsigned int ft_count_walls(void);
+t_obj *ft_get_wall_nearest(t_pos pos);
 
 // Resource getters with miner deconfliction
 t_obj *ft_get_gems_nearest(t_pos pos);

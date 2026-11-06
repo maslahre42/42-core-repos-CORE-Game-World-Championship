@@ -112,10 +112,21 @@ static void handle_hunter(t_obj *u, t_obj *core, t_obj *opp_core)
 
 	if (opp_core)
 	{
-		if (ft_is_adjacent(u->pos, opp_core->pos))
-			core_action_attack(u, opp_core);
+		if (u->s_unit.properties.damage_core > 0)
+		{
+			if (ft_is_adjacent(u->pos, opp_core->pos))
+				core_action_attack(u, opp_core);
+			else
+				safe_travel(u, opp_core->pos);
+		}
 		else
-			safe_travel(u, opp_core->pos);
+		{
+			// If adjacent to opponent Core without siege damage, step away to clear slots for Strikers!
+			if (ft_is_adjacent(u->pos, opp_core->pos))
+				step_away_from_core(u, opp_core);
+			else if (ft_distance(u->pos, opp_core->pos) > 2)
+				safe_travel(u, opp_core->pos);
+		}
 	}
 }
 
@@ -124,7 +135,7 @@ static void handle_striker(t_obj *u, t_obj *core, t_obj *opp_core, unsigned int 
 	if (!opp_core || opp_core->hp == 0)
 	{
 		t_obj *opp_unit = ft_get_units_opponent_nearest(u->pos);
-		if (opp_unit)
+		if (opp_unit && u->s_unit.properties.damage_unit > 0)
 		{
 			if (ft_is_adjacent(u->pos, opp_unit->pos))
 				core_action_attack(u, opp_unit);
@@ -141,12 +152,15 @@ static void handle_striker(t_obj *u, t_obj *core, t_obj *opp_core, unsigned int 
 		return;
 	}
 
-	// 2. Focus-fire adjacent enemy unit blocking our advance
-	t_obj *adj_opp = ft_get_best_adjacent_enemy(u);
-	if (adj_opp)
+	// 2. Focus-fire adjacent enemy unit blocking our advance (only if capable of combat damage)
+	if (u->s_unit.properties.damage_unit > 0)
 	{
-		core_action_attack(u, adj_opp);
-		return;
+		t_obj *adj_opp = ft_get_best_adjacent_enemy(u);
+		if (adj_opp)
+		{
+			core_action_attack(u, adj_opp);
+			return;
+		}
 	}
 
 	// 3. Lanchester Squad Rally: if newly spawned near our Core and alone, rally briefly
@@ -160,26 +174,8 @@ static void handle_striker(t_obj *u, t_obj *core, t_obj *opp_core, unsigned int 
 		}
 	}
 
-	// 4. Dual-Slot Corner Core Routing (prevents single-file traffic jams at enemy Core)
-	t_pos slot_a = opp_core->pos;
-	t_pos slot_b = opp_core->pos;
-	if (opp_core->pos.x == 0 && opp_core->pos.y == 0)
-	{
-		slot_a.x = 1; slot_a.y = 0;
-		slot_b.x = 0; slot_b.y = 1;
-	}
-	else if (opp_core->pos.x > 0 && opp_core->pos.y > 0)
-	{
-		slot_a.x = opp_core->pos.x - 1; slot_a.y = opp_core->pos.y;
-		slot_b.x = opp_core->pos.x; slot_b.y = opp_core->pos.y - 1;
-	}
-
-	t_pos target_slot = (u->id % 2 == 0) ? slot_a : slot_b;
-	t_obj *occ = core_get_obj_from_pos(target_slot);
-	if (occ && occ->type == OBJ_UNIT && occ->s_unit.team_id == game.my_team_id && occ->id != u->id)
-		target_slot = (u->id % 2 == 0) ? slot_b : slot_a;
-
-	safe_travel(u, target_slot);
+	// 4. March straight to opponent Core
+	safe_travel(u, opp_core->pos);
 }
 
 void handle_combat(t_obj *core, t_obj *opp_core, t_obj **units)

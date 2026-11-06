@@ -3,11 +3,11 @@
 42 CORE Autonomous Evolutionary Trainer (Self-Play / Hall-of-Fame Gauntlet)
 
 Usage:
-    # Initialize the training environment & save Gen 0 Champion:
+    # Initialize the training environment & save Reigning Champion:
     python3 scripts/evolve.py --init-only
 
-    # Run evolutionary self-play training loop (e.g., 50 generations):
-    python3 scripts/evolve.py --generations 50 --matches-per-eval 2
+    # Run evolutionary self-play training loop (e.g., 20 generations):
+    python3 scripts/evolve.py --generations 20 --matches-per-eval 1
 """
 
 import argparse
@@ -31,13 +31,13 @@ PARAM_SPACE = {
     "MAX_MINERS": (2, 4),
     "CARRIER_EARLY_TICKS": (120, 300),
     "CARRIER_EARLY_THRESHOLD": (15, 40),
-    "CARRIER_MID_THRESHOLD": (35, 80),
-    "CARRIER_MINER_PICKUP_MIN": (10, 30),
+    "CARRIER_MID_THRESHOLD": (30, 80),
+    "CARRIER_MINER_PICKUP_MIN": (8, 30),
     "MINER_SOLO_RETURN_GEMS": (30, 65),
     "RES_DIST_UNIT_WEIGHT": (1, 4),
     "RES_DIST_CORE_WEIGHT": (1, 3),
     "RES_CLAIMED_PENALTY": (60, 200),
-    "RES_PILE_NEAR_RADIUS": (3, 7),
+    "RES_PILE_NEAR_RADIUS": (3, 8),
     "CORE_THREAT_RADIUS": (6, 11),
     "DEFENDER_INTERCEPT_RADIUS": (5, 9),
     "HUNTER_UNARMED_BOUNTY": (2000, 7000),
@@ -46,6 +46,9 @@ PARAM_SPACE = {
     "HUNTER_CORE_THREAT_BOUNTY": (600, 2500),
     "SQUAD_RALLY_SIZE": (1, 3),
     "SQUAD_RALLY_DIST": (4, 8),
+    "HUNTER_LOADOUT": (0, 1),
+    "STRIKER_LOADOUT": (0, 1),
+    "STRIKER_TO_HUNTER_RATIO": (1, 4),
 }
 
 BASELINE_GENOME = {
@@ -53,22 +56,25 @@ BASELINE_GENOME = {
     "TARGET_MINERS": 2,
     "MAX_MINERS": 3,
     "CARRIER_EARLY_TICKS": 200,
-    "CARRIER_EARLY_THRESHOLD": 24,
-    "CARRIER_MID_THRESHOLD": 48,
+    "CARRIER_EARLY_THRESHOLD": 29,
+    "CARRIER_MID_THRESHOLD": 39,
     "CARRIER_MINER_PICKUP_MIN": 12,
     "MINER_SOLO_RETURN_GEMS": 45,
     "RES_DIST_UNIT_WEIGHT": 2,
-    "RES_DIST_CORE_WEIGHT": 1,
+    "RES_DIST_CORE_WEIGHT": 2,
     "RES_CLAIMED_PENALTY": 120,
-    "RES_PILE_NEAR_RADIUS": 5,
+    "RES_PILE_NEAR_RADIUS": 6,
     "CORE_THREAT_RADIUS": 8,
     "DEFENDER_INTERCEPT_RADIUS": 7,
     "HUNTER_UNARMED_BOUNTY": 5000,
-    "HUNTER_GEM_CARRIER_BOUNTY": 800,
+    "HUNTER_GEM_CARRIER_BOUNTY": 919,
     "HUNTER_LOW_HP_WEIGHT": 40,
     "HUNTER_CORE_THREAT_BOUNTY": 1200,
     "SQUAD_RALLY_SIZE": 2,
-    "SQUAD_RALLY_DIST": 5,
+    "SQUAD_RALLY_DIST": 6,
+    "HUNTER_LOADOUT": 1,
+    "STRIKER_LOADOUT": 1,
+    "STRIKER_TO_HUNTER_RATIO": 2,
 }
 
 def run_in_container(cmd, timeout=120):
@@ -107,7 +113,7 @@ def build_bot(container=True):
         res = subprocess.run(["make", "-C", "my-core-bot", "re"], capture_output=True, text=True)
         return res.returncode == 0
 
-def run_single_scrimmage(bot1_rel, bot2_rel, p1_id=42, p2_id=43):
+def run_single_scrimmage(bot1_rel, bot2_rel, candidate_role="bot1", p1_id=42, p2_id=43):
     """Executes a single match between bot1 and bot2 inside the container."""
     run_in_container("pkill -9 server; pkill -9 bot; pkill -9 gridmaster; true")
     time.sleep(0.2)
@@ -120,15 +126,16 @@ def run_single_scrimmage(bot1_rel, bot2_rel, p1_id=42, p2_id=43):
         f"/workspace/{bot1_rel} {p1_id} > /tmp/bot1.log 2>&1"
     )
 
-    t0 = time.time()
     try:
         run_in_container(match_cmd, timeout=45)
     except subprocess.TimeoutExpired:
         run_in_container("pkill -9 server; pkill -9 bot; pkill -9 gridmaster; true")
         return {"winner": "timeout", "ticks": 10000, "af": 999, "core_dmg": 0}
 
-    bot1_log = run_in_container("cat /tmp/bot1.log").stdout
-    action_failures = bot1_log.count("Action Failure")
+    # Accurately inspect candidate's log
+    candidate_log_file = "/tmp/bot1.log" if candidate_role == "bot1" else "/tmp/bot2.log"
+    cand_log = run_in_container(f"cat {candidate_log_file}").stdout
+    action_failures = cand_log.count("Action Failure")
 
     replay_res = run_in_container("cat /workspace/replays/replay_latest.json")
     if replay_res.returncode != 0 or not replay_res.stdout.strip():
@@ -156,9 +163,9 @@ def run_single_scrimmage(bot1_rel, bot2_rel, p1_id=42, p2_id=43):
 def evaluate_candidate(opponents, rounds=1):
     """
     Evaluates candidate my-core-bot/bot against a list of opponent binaries.
-    Returns composite fitness score.
+    Returns normalized composite fitness score, wins, matches, and action failures.
     """
-    total_score = 0
+    raw_score = 0
     total_wins = 0
     total_matches = 0
     total_af = 0
@@ -166,66 +173,98 @@ def evaluate_candidate(opponents, rounds=1):
     for opp in opponents:
         for _ in range(rounds):
             # Test as P1
-            res1 = run_single_scrimmage("my-core-bot/bot", opp, 42, 43)
+            res1 = run_single_scrimmage("my-core-bot/bot", opp, candidate_role="bot1", p1_id=42, p2_id=43)
             total_matches += 1
             total_af += res1["af"]
 
             if res1["winner"] == "bot1":
                 total_wins += 1
-                win_bonus = 1000
+                win_bonus = 1500
                 speed_bonus = max(0, 5000 - res1["ticks"]) // 2
-                total_score += win_bonus + speed_bonus
+                raw_score += win_bonus + speed_bonus
             else:
-                total_score += res1["core_dmg"] * 3
+                raw_score += res1["core_dmg"] * 10
 
             # Test side-swapped as P2
-            res2 = run_single_scrimmage(opp, "my-core-bot/bot", 42, 43)
+            res2 = run_single_scrimmage(opp, "my-core-bot/bot", candidate_role="bot2", p1_id=42, p2_id=43)
             total_matches += 1
-            # Note: in res2, candidate is bot2
+            total_af += res2["af"]
+
             if res2["winner"] == "bot2":
                 total_wins += 1
-                win_bonus = 1000
+                win_bonus = 1500
                 speed_bonus = max(0, 5000 - res2["ticks"]) // 2
-                total_score += win_bonus + speed_bonus
+                raw_score += win_bonus + speed_bonus
             else:
-                total_score += (100 - res2.get("core_dmg", 0)) * 2
+                raw_score += (100 - res2.get("core_dmg", 0)) * 5
 
-    # Severe penalty for any action failures
-    total_score -= total_af * 100
-    return total_score, total_wins, total_matches, total_af
+    # Normalized average score per match
+    avg_score = int(raw_score / total_matches) if total_matches > 0 else 0
+    # Penalty for action failures
+    avg_score -= (total_af * 100)
+    return avg_score, total_wins, total_matches, total_af
 
 def setup_environment():
-    """Sets up hall_of_fame directory with baseline models."""
+    """Sets up hall_of_fame directory and ensures baseline / champion models exist."""
     os.makedirs(HOF_DIR, exist_ok=True)
     os.makedirs("replays", exist_ok=True)
 
-    print("\n📦 Setting up Hall of Fame Gauntlet...")
-    write_genome(BASELINE_GENOME)
+    # 1. Load existing best genome if present, otherwise initialize with baseline
+    if os.path.exists(BEST_GENOME_PATH):
+        print(f"📦 Loading existing best genome from {BEST_GENOME_PATH}...")
+        with open(BEST_GENOME_PATH) as f:
+            active_genome = json.load(f)
+        for k, v in BASELINE_GENOME.items():
+            if k not in active_genome:
+                active_genome[k] = v
+    else:
+        print("📦 Initializing with baseline genome...")
+        active_genome = copy.deepcopy(BASELINE_GENOME)
 
+    write_genome(active_genome)
+
+    # 2. Build my-core-bot with active genome
     if not build_bot(container=True):
         print("❌ Initial build failed for my-core-bot!")
         sys.exit(1)
 
+    # 3. Always maintain champion_best as the reigning champion binary for true self-play
+    champ_best_path = os.path.join(HOF_DIR, "champion_best")
+    shutil.copy("my-core-bot/bot", champ_best_path)
+    print(f"✅ Reigning champion binary preserved at {champ_best_path}")
+
+    # Ensure champion_gen0 exists
     gen0_path = os.path.join(HOF_DIR, "champion_gen0")
-    shutil.copy("my-core-bot/bot", gen0_path)
-    print(f"✅ Gen 0 Champion saved to {gen0_path}")
+    if not os.path.exists(gen0_path):
+        shutil.copy("my-core-bot/bot", gen0_path)
+        print(f"✅ Gen 0 Champion saved to {gen0_path}")
 
     # Copy baseline gridmaster if available
     if os.path.exists("gridmaster/gridmaster"):
         gm_target = os.path.join(HOF_DIR, "gridmaster")
-        shutil.copy("gridmaster/gridmaster", gm_target)
-        print(f"✅ Gridmaster benchmark saved to {gm_target}")
+        if not os.path.exists(gm_target):
+            shutil.copy("gridmaster/gridmaster", gm_target)
+            print(f"✅ Gridmaster benchmark saved to {gm_target}")
 
     # Copy Bot Beta if available
     if os.path.exists("bots/bot_beta/bot"):
         beta_target = os.path.join(HOF_DIR, "bot_beta")
-        shutil.copy("bots/bot_beta/bot", beta_target)
-        print(f"✅ Bot Beta (Citadel) saved to {beta_target}")
+        if not os.path.exists(beta_target):
+            shutil.copy("bots/bot_beta/bot", beta_target)
+            print(f"✅ Bot Beta (Citadel) saved to {beta_target}")
 
-    # Save best genome
+    # Copy opponent_speed_brawler if available
+    if os.path.exists("bots/opponent_speed_brawler/bot"):
+        brawler_target = os.path.join(HOF_DIR, "opponent_speed_brawler")
+        if not os.path.exists(brawler_target):
+            shutil.copy("bots/opponent_speed_brawler/bot", brawler_target)
+            print(f"✅ Opponent Speed Brawler clone saved to {brawler_target}")
+
+    # Persist best genome
     with open(BEST_GENOME_PATH, "w") as f:
-        json.dump(BASELINE_GENOME, f, indent=4)
-    print(f"✅ Baseline genome written to {BEST_GENOME_PATH}")
+        json.dump(active_genome, f, indent=4)
+    print(f"✅ Active best genome persisted to {BEST_GENOME_PATH}")
+    return active_genome
 
 def main():
     parser = argparse.ArgumentParser(description="42 CORE Evolutionary Parameter Optimizer")
@@ -235,7 +274,7 @@ def main():
     parser.add_argument("--mutation-rate", type=float, default=0.35, help="Probability of mutating each weight")
     args = parser.parse_args()
 
-    setup_environment()
+    current_best_genome = setup_environment()
 
     if args.init_only:
         print("\n🎉 Training environment initialized successfully!")
@@ -243,20 +282,19 @@ def main():
         print(f"    python3 scripts/evolve.py --generations {args.generations} --matches-per-eval {args.matches_per_eval}\n")
         return
 
-    # Load baseline genome
-    with open(BEST_GENOME_PATH) as f:
-        current_best_genome = json.load(f)
-
-    # Opponent Gauntlet: Hall of fame champions + Gridmaster
-    gauntlet = ["gridmaster/gridmaster", f"{HOF_DIR}/champion_gen0"]
-    if os.path.exists(f"{HOF_DIR}/bot_beta"):
-        gauntlet.append(f"{HOF_DIR}/bot_beta")
+    # Opponent Gauntlet: Reigning Champion (Self-Play) + Opponent Speed Brawler + Gridmaster
+    gauntlet = [f"{HOF_DIR}/champion_best"]
     if os.path.exists(f"{HOF_DIR}/opponent_speed_brawler"):
         gauntlet.append(f"{HOF_DIR}/opponent_speed_brawler")
+    if os.path.exists(f"{HOF_DIR}/gridmaster"):
+        gauntlet.append(f"{HOF_DIR}/gridmaster")
+    elif os.path.exists("gridmaster/gridmaster"):
+        gauntlet.append("gridmaster/gridmaster")
 
-    print("\n⚔️  Evaluating Baseline Genome against Gauntlet...")
+    print(f"\n⚔️  Gauntlet Opponents ({len(gauntlet)}): {', '.join(gauntlet)}")
+    print("⚔️  Evaluating Reigning Champion against Gauntlet...")
     current_best_score, wins, matches, af = evaluate_candidate(gauntlet, rounds=args.matches_per_eval)
-    print(f"🏆 Baseline Fitness: {current_best_score} | Wins: {wins}/{matches} | AF: {af}\n")
+    print(f"🏆 Reigning Champion Average Fitness: {current_best_score} | Wins: {wins}/{matches} | AF: {af}\n")
 
     print(f"🚀 Starting Evolution Loop ({args.generations} Generations)...")
     print("=" * 70)
@@ -280,18 +318,13 @@ def main():
             current_best_score = score
             current_best_genome = candidate_genome
 
-            # Save newly evolved champion
+            # Update reigning champion binary and save historical checkpoint
+            shutil.copy("my-core-bot/bot", f"{HOF_DIR}/champion_best")
             champ_file = os.path.join(HOF_DIR, f"champion_gen{gen}")
             shutil.copy("my-core-bot/bot", champ_file)
 
             with open(BEST_GENOME_PATH, "w") as f:
                 json.dump(current_best_genome, f, indent=4)
-
-            # Add previous champion to gauntlet pool to prevent regression
-            if champ_file not in gauntlet:
-                gauntlet.append(champ_file)
-                if len(gauntlet) > 5:
-                    gauntlet.pop(1) # Keep gauntlet focused
         else:
             # Revert to best known genome
             write_genome(current_best_genome)
@@ -302,7 +335,7 @@ def main():
     write_genome(current_best_genome)
     build_bot(container=True)
     print(f"🏆 Best Genome persisted to {HEADER_PATH} and {BEST_GENOME_PATH}")
-    print(f"Best Fitness Score: {current_best_score}\n")
+    print(f"Best Average Fitness Score: {current_best_score}\n")
 
 if __name__ == "__main__":
     main()

@@ -92,5 +92,12 @@ void handle_carrier(t_obj *core, t_obj **units)
 			safe_travel(u, core->pos);
 			continue;
 		}
+
+		// 5. Anti-Corking: If idle next to Core with no work, step away so Core can spawn units!
+		if (ft_is_adjacent(u->pos, core->pos))
+		{
+			step_away_from_core(u, core);
+			core_debug_addObjectInfo(u, "Carrier stepping away from Core to prevent spawn corking");
+		}
 	}
 }

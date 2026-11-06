@@ -20,6 +20,7 @@ static bool is_gems(const t_obj *obj) { return (obj->type == OBJ_GEM_PILE); }
 static bool is_unit(const t_obj *obj) { return (obj->type == OBJ_UNIT); }
 static bool is_unit_own(const t_obj *obj) { return (is_unit(obj) && obj->s_unit.team_id == game.my_team_id); }
 static bool is_unit_opponent(const t_obj *obj) { return (is_unit(obj) && obj->s_unit.team_id != game.my_team_id); }
+static bool is_wall(const t_obj *obj) { return (obj->type == OBJ_WALL); }
 
 t_obj *ft_get_core_own(void)
 {
@@ -35,6 +36,7 @@ t_obj *ft_get_core_opponent(void)
 
 t_obj *ft_get_deposit_nearest(t_pos pos) { return core_get_obj_filter_nearest(pos, is_deposit); }
 t_obj *ft_get_gems_nearest(t_pos pos) { return core_get_obj_filter_nearest(pos, is_gems); }
+t_obj *ft_get_wall_nearest(t_pos pos) { return core_get_obj_filter_nearest(pos, is_wall); }
 t_obj **ft_get_units_own(void) { return core_get_objs_filter(is_unit_own); }
 t_obj **ft_get_units_opponent(void) { return core_get_objs_filter(is_unit_opponent); }
 t_obj *ft_get_units_opponent_nearest(t_pos pos) { return core_get_obj_filter_nearest(pos, is_unit_opponent); }
@@ -110,6 +112,17 @@ unsigned int ft_count_active_resources(void)
 	return count;
 }
 
+unsigned int ft_count_walls(void)
+{
+	unsigned int count = 0;
+	for (int i = 0; game.objects && game.objects[i]; i++)
+	{
+		if (game.objects[i]->type == OBJ_WALL)
+			count++;
+	}
+	return count;
+}
+
 unsigned int ft_count_enemy_combat_units(void)
 {
 	unsigned int count = 0;
@@ -117,6 +130,20 @@ unsigned int ft_count_enemy_combat_units(void)
 	for (int i = 0; opps && opps[i]; i++)
 	{
 		if (opps[i]->s_unit.properties.damage_unit > 0 || opps[i]->s_unit.properties.damage_core > 0)
+			count++;
+	}
+	free(opps);
+	return count;
+}
+
+unsigned int ft_count_enemy_speed_warriors(void)
+{
+	unsigned int count = 0;
+	t_obj **opps = ft_get_units_opponent();
+	for (int i = 0; opps && opps[i]; i++)
+	{
+		// Detect low-HP high-tempo units (<= 15 HP with combat damage)
+		if (opps[i]->s_unit.properties.damage_unit > 0 && opps[i]->hp <= 15)
 			count++;
 	}
 	free(opps);

@@ -90,7 +90,28 @@ void handle_miners(t_obj *core, t_obj **units)
 			continue;
 		}
 
-		// 5. If carrying residual gems and nothing else to mine, return to Core
+		// 5. If all deposits and gem piles are exhausted: Miners become Demolition / Sapper squads!
+		if (!target)
+		{
+			t_obj *opp_core = ft_get_core_opponent();
+			t_obj *wall = ft_get_wall_nearest(u->pos);
+
+			if (wall)
+			{
+				if (ft_is_adjacent(u->pos, wall->pos))
+					core_action_attack(u, wall);
+				else
+					safe_travel(u, wall->pos);
+				continue;
+			}
+			else if (opp_core)
+			{
+				safe_travel(u, opp_core->pos);
+				continue;
+			}
+		}
+
+		// 6. If carrying residual gems and nothing else to mine, return to Core
 		if (carried > 0)
 		{
 			if (ft_is_adjacent(u->pos, core->pos))
@@ -99,6 +120,14 @@ void handle_miners(t_obj *core, t_obj **units)
 				continue;
 			}
 			safe_travel(u, core->pos);
+			continue;
+		}
+
+		// 7. Anti-Corking: If idle next to Core with no work, step away so Core can spawn units!
+		if (ft_is_adjacent(u->pos, core->pos))
+		{
+			step_away_from_core(u, core);
+			core_debug_addObjectInfo(u, "Miner stepping away from Core to prevent spawn corking");
 		}
 	}
 }
