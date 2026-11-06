@@ -309,7 +309,8 @@ def main():
             continue
 
         score, wins, matches, af = evaluate_candidate(gauntlet, rounds=args.matches_per_eval)
-        is_improvement = (score > current_best_score)
+        min_wins = (matches * 2) // 3
+        is_improvement = (score > current_best_score) and (af == 0) and (wins >= min_wins)
 
         status_tag = "🌟 NEW CHAMPION!" if is_improvement else "❌ Rejected"
         print(f"[Gen {gen:03d}] Score: {score:5d} (Best: {current_best_score:5d}) | Wins: {wins}/{matches} | AF: {af:2d} | {status_tag}")
@@ -327,9 +328,10 @@ def main():
                 json.dump(current_best_genome, f, indent=4)
 
             # Re-baseline current_best_score against the newly strengthened gauntlet
-            # so a single lucky map spike against an older, weaker champion never freezes evolution!
-            current_best_score, _, _, _ = evaluate_candidate(gauntlet, rounds=args.matches_per_eval)
-            print(f"          Re-baselined Champion Score vs Updated Gauntlet: {current_best_score}")
+            # Smooth with the winning score to avoid single-seed volatility freezing evolution!
+            rebaseline_score, _, _, _ = evaluate_candidate(gauntlet, rounds=args.matches_per_eval)
+            current_best_score = (score + rebaseline_score) // 2
+            print(f"          Smoothed Champion Baseline vs Updated Gauntlet: {current_best_score}")
         else:
             # Revert to best known genome
             write_genome(current_best_genome)

@@ -279,6 +279,27 @@ void __wrap_core_action_transferGems(const t_obj *source, t_pos target_pos, unsi
 	__real_core_action_transferGems(source, target_pos, amount);
 }
 
+static bool is_tile_threatened_by_enemy(t_pos pos)
+{
+	const int dx[4] = {1, -1, 0, 0};
+	const int dy[4] = {0, 0, 1, -1};
+	for (int d = 0; d < 4; d++)
+	{
+		int nx = (int)pos.x + dx[d];
+		int ny = (int)pos.y + dy[d];
+		if (nx < 0 || ny < 0 || nx >= (int)game.grid_size || ny >= (int)game.grid_size)
+			continue;
+		t_pos adj = {(unsigned short)nx, (unsigned short)ny};
+		t_obj *o = core_get_obj_from_pos(adj);
+		if (o && o->type == OBJ_UNIT && o->s_unit.team_id != game.my_team_id &&
+			o->s_unit.properties.damage_unit > 0)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 t_tile_travelability safe_travelability(t_pos pos, const t_obj *unit)
 {
 	t_tile_travelability res;
@@ -288,11 +309,16 @@ t_tile_travelability safe_travelability(t_pos pos, const t_obj *unit)
 	t_obj *obj = core_get_obj_from_pos(pos);
 	if (!obj)
 	{
-		if (g_moved_to_tile[pos.x][pos.y])
+		if (is_tile_occupied(pos))
 		{
 			res.weight = 10000;
 			res.action = CORE_TRAVEL_BLOCK;
 			return res;
+		}
+		// Unarmed units (Carriers, Miners, Speed Siegers) route around enemy melee range!
+		if (unit && unit->s_unit.properties.damage_unit == 0 && is_tile_threatened_by_enemy(pos))
+		{
+			res.weight = 25;
 		}
 		return res;
 	}

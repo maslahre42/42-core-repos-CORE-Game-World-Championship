@@ -4,6 +4,7 @@
 #include "core_lib.h"
 #include "tuned_params.h"
 #include <string.h>
+#include <limits.h>
 
 #define MAX_GRID_SIZE 64
 #define MAX_TRACKED_TARGETS 512
