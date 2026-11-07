@@ -227,6 +227,20 @@ void step_away_from_core(const t_obj *u, t_obj *core)
 		core_action_move(u, best_step);
 }
 
+static bool is_p1_team(void)
+{
+	t_obj *core = ft_get_core_own();
+	t_obj *opp = ft_get_core_opponent();
+	if (core && opp)
+	{
+		if (core->pos.x == 0 && core->pos.y == 0)
+			return true;
+		if (core->id < opp->id)
+			return true;
+	}
+	return (game.my_team_id == 42);
+}
+
 void __wrap_core_action_move(const t_obj *unit, t_pos pos)
 {
 	if (!unit || unit->s_unit.action_cooldown > 0 || has_unit_acted(unit->id))
@@ -256,7 +270,7 @@ void __wrap_core_action_move(const t_obj *unit, t_pos pos)
 			{
 				if (unit->s_unit.properties.damage_unit == 0)
 					return;
-				if (game.my_team_id != 42)
+				if (!is_p1_team())
 					return;
 			}
 		}
@@ -318,9 +332,9 @@ void __wrap_core_action_attack(const t_obj *attacker, const t_obj *target)
 	if (t->type != OBJ_GEM_PILE && t->hp <= get_pending_damage(t->id))
 		return;
 
-	// Tie-breaker deconfliction: if opponent executes before us (my_team_id != 42),
+	// Tie-breaker deconfliction: if opponent executes before us (!is_p1_team()),
 	// check if adjacent enemies will destroy the object this tick before our attack executes!
-	if (game.my_team_id != 42 && (t->type == OBJ_DEPOSIT || t->type == OBJ_WALL))
+	if (!is_p1_team() && (t->type == OBJ_DEPOSIT || t->type == OBJ_WALL))
 	{
 		unsigned long enemy_pending_dmg = 0;
 		for (int i = 0; game.objects && game.objects[i]; i++)
@@ -499,7 +513,11 @@ t_tile_travelability safe_travelability(t_pos pos, const t_obj *unit)
 	{
 		if (unit && unit->s_unit.properties.damage_object > 0)
 		{
-			res.weight = 2 + (obj->hp + unit->s_unit.properties.damage_object - 1) / unit->s_unit.properties.damage_object;
+			unsigned int hits = (obj->hp + unit->s_unit.properties.damage_object - 1) / unit->s_unit.properties.damage_object;
+			if (obj->type == OBJ_WALL)
+				res.weight = 60 + hits * 8;
+			else
+				res.weight = 2 + hits;
 			res.action = CORE_TRAVEL_ATTACK;
 		}
 		else

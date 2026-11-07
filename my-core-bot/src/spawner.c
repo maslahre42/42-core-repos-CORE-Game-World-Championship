@@ -72,9 +72,10 @@ void handle_spawner(t_obj *core)
 	}
 
 	// 2. Emergency Core Defense: if threatened and we have no fighters yet
-	if (threatened && (n_hunters + n_defenders == 0) && gems >= COST_BRAWLER_HEAVY)
+	if (threatened && (n_hunters + n_defenders == 0))
 	{
-		spawn_brawler_or_hunter(core, gems, n_hunters, true);
+		if (gems >= COST_BRAWLER_HEAVY)
+			spawn_brawler_or_hunter(core, gems, n_hunters, true);
 		return;
 	}
 

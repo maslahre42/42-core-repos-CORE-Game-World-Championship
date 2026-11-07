@@ -279,6 +279,7 @@ static void handle_hunter_or_scout(t_obj *u, t_obj *core, t_obj *opp_core,
 				e->s_unit.properties.damage_unit > 0 && e->hp > 0 &&
 				ft_distance(u->pos, e->pos) == 2 &&
 				e->s_unit.action_cooldown < move_cd &&
+				!ft_is_enemy_engaged_by_ally(e, u->id) &&
 				ft_has_open_melee_gap(u, e))
 			{
 				raw_hold = true;
