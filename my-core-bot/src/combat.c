@@ -1,5 +1,22 @@
 #include "bot.h"
 
+static bool g_seen_enemy_unit = false;
+
+bool ft_enemy_units_cleared(void)
+{
+	bool enemy_alive = false;
+	for (int i = 0; game.objects && game.objects[i]; i++)
+	{
+		const t_obj *o = game.objects[i];
+		if (o->type == OBJ_UNIT && o->s_unit.team_id != game.my_team_id && o->hp > 0)
+		{
+			g_seen_enemy_unit = true;
+			enemy_alive = true;
+		}
+	}
+	return (g_seen_enemy_unit && !enemy_alive) || (game.elapsed_ticks > 400 && !enemy_alive);
+}
+
 static __attribute__((unused)) t_pos get_defensive_perimeter_slot(const t_obj *u, const t_obj *core)
 {
 	t_pos slot = core->pos;
@@ -26,6 +43,8 @@ static __attribute__((unused)) t_pos get_defensive_perimeter_slot(const t_obj *u
 
 static void handle_defender(t_obj *u, t_obj *core, t_obj *opp_core, t_game_phase phase)
 {
+	if (!u || u->s_unit.action_cooldown > 0 || has_unit_acted(u->id))
+		return;
 	if (!core)
 		return;
 
@@ -86,6 +105,9 @@ static void handle_defender(t_obj *u, t_obj *core, t_obj *opp_core, t_game_phase
 static void handle_hunter_or_scout(t_obj *u, t_obj *core, t_obj *opp_core,
 									t_game_phase phase, unsigned long shared_focus_id)
 {
+	if (!u || u->s_unit.action_cooldown > 0 || has_unit_acted(u->id))
+		return;
+
 	// 1. Stage 3 Attack: strike best adjacent enemy immediately
 	t_obj *adj_opp = ft_get_best_adjacent_enemy(u);
 	if (adj_opp)
@@ -156,20 +178,42 @@ static void handle_hunter_or_scout(t_obj *u, t_obj *core, t_obj *opp_core,
 		if (ft_is_adjacent(u->pos, best_target->pos))
 		{
 			core_action_attack(u, best_target);
+			return;
 		}
-		else if (ft_should_hold_for_first_strike(u, best_target))
+
+		// First-Strike Guard: check if ANY armed enemy is at distance 2!
+		bool should_hold = false;
+		long my_base_cd = (long)u->s_unit.properties.base_action_cooldown;
+		for (int j = 0; game.objects && game.objects[j]; j++)
 		{
-			step_away_from_core(u, core);
+			const t_obj *e = game.objects[j];
+			if (e->type == OBJ_UNIT && e->s_unit.team_id != game.my_team_id &&
+				e->s_unit.properties.damage_unit > 0 && e->hp > 0 &&
+				ft_distance(u->pos, e->pos) == 2)
+			{
+				if (ft_is_enemy_engaged_by_ally(e, u->id))
+					continue;
+				if (e->s_unit.action_cooldown < my_base_cd && u->s_unit.action_cooldown > -6)
+				{
+					should_hold = true;
+					break;
+				}
+			}
 		}
-		else
+
+		if (should_hold)
 		{
-			safe_travel(u, best_target->pos);
+			if (core && ft_is_adjacent(u->pos, core->pos))
+				step_away_from_core(u, core);
+			return;
 		}
+
+		safe_travel(u, best_target->pos);
 		return;
 	}
 
-	// 3. If all enemy units are wiped out, surround the enemy Core at distance 2-3
-	// (leaving distance 1 open for our Speed Sieger, while spawn-camping any new enemy unit!)
+	// 3. If all enemy units are wiped out, surround the enemy Core at distance 2
+	// (leaving distance 1 open for our Finisher, while spawn-camping any new enemy unit!)
 	if (opp_core)
 	{
 		unsigned int d_opp = ft_distance(u->pos, opp_core->pos);
@@ -177,7 +221,7 @@ static void handle_hunter_or_scout(t_obj *u, t_obj *core, t_obj *opp_core,
 		{
 			core_action_attack(u, opp_core);
 		}
-		else if (d_opp > 3)
+		else if (d_opp > 2)
 		{
 			safe_travel(u, opp_core->pos);
 		}
@@ -191,35 +235,19 @@ static void handle_hunter_or_scout(t_obj *u, t_obj *core, t_obj *opp_core,
 static void handle_striker(t_obj *u, t_obj *core, t_obj *opp_core)
 {
 	(void)core;
-	if (!opp_core || opp_core->hp == 0)
-	{
-		t_obj *opp_unit = ft_get_units_opponent_nearest(u->pos);
-		if (opp_unit && u->s_unit.properties.damage_unit > 0)
-		{
-			if (ft_is_adjacent(u->pos, opp_unit->pos))
-				core_action_attack(u, opp_unit);
-			else
-				safe_travel(u, opp_unit->pos);
-		}
+	if (!u || u->s_unit.action_cooldown > 0 || has_unit_acted(u->id))
 		return;
-	}
+	if (!opp_core || opp_core->hp == 0)
+		return;
 
+	// 1. Attack opponent Core if adjacent (deals 6 Core damage per hit!)
 	if (ft_is_adjacent(u->pos, opp_core->pos))
 	{
 		core_action_attack(u, opp_core);
 		return;
 	}
 
-	if (u->s_unit.properties.damage_unit > 0)
-	{
-		t_obj *adj_opp = ft_get_best_adjacent_enemy(u);
-		if (adj_opp)
-		{
-			core_action_attack(u, adj_opp);
-			return;
-		}
-	}
-
+	// 2. Travel directly to opponent Core (safe_travel attacks walls along the optimal path)
 	safe_travel(u, opp_core->pos);
 }
 
@@ -239,7 +267,7 @@ void handle_combat(t_obj *core, t_obj *opp_core, t_obj **units)
 	for (int i = 0; units && units[i]; i++)
 	{
 		t_obj *u = units[i];
-		if (!u->s_unit.name || u->s_unit.action_cooldown > 0)
+		if (!u->s_unit.name || u->s_unit.action_cooldown > 0 || has_unit_acted(u->id))
 			continue;
 
 		if (strcmp(u->s_unit.name, "Defender") == 0)

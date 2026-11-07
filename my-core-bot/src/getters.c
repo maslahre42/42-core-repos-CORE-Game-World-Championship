@@ -67,6 +67,18 @@ bool ft_is_pos_near_armed_enemy(t_pos pos, unsigned int radius)
 	return false;
 }
 
+bool ft_is_enemy_adjacent_to_pos(t_pos pos)
+{
+	for (int i = 0; game.objects && game.objects[i]; i++)
+	{
+		t_obj *o = game.objects[i];
+		if (o->type == OBJ_UNIT && o->s_unit.team_id != game.my_team_id &&
+			o->hp > 0 && ft_distance(pos, o->pos) <= 1)
+			return true;
+	}
+	return false;
+}
+
 // Overkill-aware, focus-fire adjacent target selector
 t_obj *ft_get_best_adjacent_enemy(const t_obj *attacker)
 {
@@ -358,16 +370,22 @@ t_obj *ft_get_resource_for_miner(t_pos unit_pos, t_pos core_pos, unsigned long u
 	t_obj *opp_core = ft_get_core_opponent();
 	t_obj *best = NULL;
 	unsigned int best_score = UINT_MAX;
+	unsigned int n_carriers = core_get_units_byName_count("Carrier");
 
 	for (int i = 0; game.objects && game.objects[i]; i++)
 	{
 		t_obj *obj = game.objects[i];
+		// If carriers exist, miners NEVER target gem piles; they focus 100% on demolishing deposits!
+		if (n_carriers > 0 && obj->type != OBJ_DEPOSIT)
+			continue;
 		if (obj->type != OBJ_DEPOSIT && obj->type != OBJ_GEM_PILE)
 			continue;
 
 		// CRITICAL SAFETY FILTER (from Monir's miner.c):
 		// Never send a Miner to a resource guarded by an armed enemy within distance 3!
 		if (ft_is_pos_near_armed_enemy(obj->pos, 3))
+			continue;
+		if (obj->type == OBJ_GEM_PILE && ft_is_enemy_adjacent_to_pos(obj->pos))
 			continue;
 
 		unsigned int dist_u = ft_distance(unit_pos, obj->pos);
@@ -377,9 +395,6 @@ t_obj *ft_get_resource_for_miner(t_pos unit_pos, t_pos core_pos, unsigned long u
 		// Avoid deposits right next to the enemy Core in the early/mid game
 		if (opp_core && ft_distance(obj->pos, opp_core->pos) <= dist_c)
 			score += 80;
-
-		if (obj->type == OBJ_GEM_PILE && score > 4)
-			score -= 4;
 
 		if (is_claimed_by_other_miner(obj->pos, unit_id))
 			score += RES_CLAIMED_PENALTY;

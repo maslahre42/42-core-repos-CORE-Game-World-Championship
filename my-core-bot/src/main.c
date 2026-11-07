@@ -15,6 +15,9 @@ void ft_on_tick(unsigned long tick)
 	handle_carrier(core, units);
 	handle_miners(core, units);
 
+	// 2.5. Yield corridors if workers were blocked by friendly combat units
+	nav_yield_for_workers(core, opp_core, units);
+
 	// 3. Military Operations: 3-Phase Tactical Combat with First-Strike Ambush
 	handle_combat(core, opp_core, units);
 
@@ -27,5 +30,19 @@ void ft_on_tick(unsigned long tick)
 
 int main(int argc, char **argv)
 {
-	return core_startGame("No_Plan_Just_Prayers", argc, argv, ft_on_tick, false);
+	return core_startGame("No_Plan_Just_Prayers",
+						  argc,
+						  argv,
+						  ft_on_tick,
+						  false);
 }
+// the plan first build very fast carier,
+// core_action_createUnit("unit_name", "speed", "speed", "gem_speed", NULL);
+// the smart hunter comes in
+// core_action_createUnit("smart hunter", "speed", "speed", "combat", "combat", NULL);
+//  then a miner..Demolition level1
+//core_action_createUnit("Demolition level1", "speed", "demolition", "demolition", NULL);
+
+// then the de
+// next should be one with max:
+// core_action_createUnit("unit_name", "speed", "speed", "gem_speed", "max_gems", "health", NULL);

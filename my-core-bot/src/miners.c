@@ -12,7 +12,7 @@ void handle_miners(t_obj *core, t_obj **units)
 		t_obj *u = units[i];
 		if (!u->s_unit.name || strcmp(u->s_unit.name, "Miner") != 0)
 			continue;
-		if (u->s_unit.action_cooldown > 0)
+		if (u->s_unit.action_cooldown > 0 || has_unit_acted(u->id))
 			continue;
 
 		unsigned long carried = u->s_unit.gems;
@@ -69,20 +69,23 @@ void handle_miners(t_obj *core, t_obj **units)
 			continue;
 		}
 
-		// 3. Mining on-site: attack adjacent GemPile or Deposit
-		t_obj *pile = ft_get_gems_nearest(u->pos);
-		if (pile && ft_is_adjacent(u->pos, pile->pos))
-		{
-			core_action_attack(u, pile);
-			core_debug_addObjectInfo(u, "Mining GemPile at (%u, %u)", pile->pos.x, pile->pos.y);
-			continue;
-		}
-
+		// 3. Mining on-site: prioritize adjacent Deposit first, or adjacent GemPile if cargo has room
 		t_obj *dep = ft_get_deposit_nearest(u->pos);
 		if (dep && ft_is_adjacent(u->pos, dep->pos))
 		{
 			core_action_attack(u, dep);
 			core_debug_addObjectInfo(u, "Demolishing Deposit at (%u, %u)", dep->pos.x, dep->pos.y);
+			continue;
+		}
+
+		t_obj *pile = ft_get_gems_nearest(u->pos);
+		if (pile && ft_is_adjacent(u->pos, pile->pos) &&
+			u->s_unit.gems < u->s_unit.properties.max_gems &&
+			pile->s_deposit_gems_pile.gems > get_pending_pile_gems(pile->id) &&
+			!ft_is_enemy_adjacent_to_pos(pile->pos))
+		{
+			core_action_attack(u, pile);
+			core_debug_addObjectInfo(u, "Mining GemPile at (%u, %u)", pile->pos.x, pile->pos.y);
 			continue;
 		}
 
