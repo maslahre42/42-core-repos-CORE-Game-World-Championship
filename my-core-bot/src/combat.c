@@ -1,6 +1,6 @@
 #include "bot.h"
 
-static bool g_seen_enemy_unit = false;
+static bool g_seen_enemy_armed = false;
 
 typedef struct s_wait_entry
 {
@@ -53,12 +53,14 @@ bool ft_enemy_units_cleared(void)
 		const t_obj *o = game.objects[i];
 		if (o->type == OBJ_UNIT && o->s_unit.team_id != game.my_team_id && o->hp > 0)
 		{
-			g_seen_enemy_unit = true;
 			if (o->s_unit.properties.damage_unit > 0 || o->s_unit.properties.damage_core > 0)
+			{
+				g_seen_enemy_armed = true;
 				enemy_armed_alive = true;
+			}
 		}
 	}
-	return (g_seen_enemy_unit && !enemy_armed_alive) || (game.elapsed_ticks > 350 && !enemy_armed_alive);
+	return (g_seen_enemy_armed && !enemy_armed_alive) || (game.elapsed_ticks > 400 && !enemy_armed_alive);
 }
 
 static void handle_defender(t_obj *u, t_obj *core, t_obj *opp_core, t_game_phase phase)
@@ -134,6 +136,13 @@ static void position_hunter_around_enemy_core(t_obj *u, t_obj *opp_core,
 	if (u->s_unit.properties.damage_core > 0 && d_opp == 1)
 	{
 		core_action_attack(u, opp_core);
+		return;
+	}
+
+	unsigned int n_strikers = core_get_units_byName_count("Striker");
+	if (n_strikers == 0)
+	{
+		safe_travel(u, opp_core->pos);
 		return;
 	}
 
@@ -214,9 +223,9 @@ static void handle_hunter_or_scout(t_obj *u, t_obj *core, t_obj *opp_core,
 		unsigned int dist_core = core ? ft_distance(core->pos, e->pos) : 20;
 		bool is_unarmed = (e->s_unit.properties.damage_unit == 0 && e->s_unit.properties.damage_core == 0);
 
-		// Prevent infinite rabbit-chase: if all armed enemies are dead, do not chase distant 1-tick runners!
+		// Prevent infinite rabbit-chase: if all armed enemies are dead, do not chase unarmed units unless adjacent!
 		// Advance directly to enemy Core instead, where returning runners will be trapped and eliminated.
-		if (ft_enemy_units_cleared() && is_unarmed && dist_me > 3)
+		if (ft_enemy_units_cleared() && is_unarmed && dist_me > 1)
 			continue;
 
 		long priority = 1000 - (long)(dist_me * 50) - (long)(e->hp * 5);
@@ -281,6 +290,36 @@ static void handle_hunter_or_scout(t_obj *u, t_obj *core, t_obj *opp_core,
 		if (raw_hold && waited < 6)
 		{
 			return;
+		}
+
+		// Lanchester Squad Rally: If this Hunter is alone and an allied Hunter is closing the gap,
+		// pause briefly at distance 3-5 from the enemy so we attack together in local numerical superiority!
+		unsigned int dist_target = ft_distance(u->pos, best_target->pos);
+		if (!raw_hold && best_target->s_unit.properties.damage_unit > 0 && dist_target >= 3 && dist_target <= 5)
+		{
+			bool ally_closing = false;
+			if (ft_count_allies_near_pos(u->pos, 2) == 0 && core_get_units_byName_count("Hunter") >= 2)
+			{
+				t_obj **own = ft_get_units_own();
+				for (int k = 0; own && own[k]; k++)
+				{
+					t_obj *ally = own[k];
+					if (ally->id != u->id && ally->s_unit.name && strcmp(ally->s_unit.name, "Hunter") == 0)
+					{
+						unsigned int adist = ft_distance(u->pos, ally->pos);
+						if (adist <= 6)
+						{
+							ally_closing = true;
+							break;
+						}
+					}
+				}
+				if (own)
+					free(own);
+			}
+			unsigned long rally_waited = get_unit_wait_ticks(u->id, ally_closing);
+			if (ally_closing && rally_waited < 5)
+				return;
 		}
 
 		safe_travel(u, best_target->pos);

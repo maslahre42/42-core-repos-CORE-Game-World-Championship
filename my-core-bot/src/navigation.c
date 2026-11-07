@@ -251,9 +251,14 @@ void __wrap_core_action_move(const t_obj *unit, t_pos pos)
 					return;
 			}
 			// Contest Prevention: if enemy is ready to move into pos this tick,
-			// yield to prevent simultaneous-step collision Action Failures regardless of team id:
+			// yield to prevent simultaneous-step collision Action Failures:
 			if (e->s_unit.action_cooldown <= 0 && ft_distance(pos, e->pos) <= 1)
-				return;
+			{
+				if (unit->s_unit.properties.damage_unit == 0)
+					return;
+				if (game.my_team_id != 42)
+					return;
+			}
 		}
 	}
 

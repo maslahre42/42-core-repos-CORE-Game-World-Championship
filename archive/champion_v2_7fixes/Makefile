@@ -6,7 +6,7 @@ OBJS = $(addprefix $(OBJDIR)/, $(notdir $(SRCS:.c=.o)))
 CC = cc
 CFLAGS = -Wall -Wextra -Werror -g -fsanitize=address
 LDFLAGS = -lm -Wl,--wrap=core_action_move -Wl,--wrap=core_action_attack -Wl,--wrap=core_action_transferGems
-CLIENT_LIB_DIR ?= $(shell if [ -d /core ]; then echo /core; else echo $(CURDIR)/../core_sys; fi)
+CLIENT_LIB_DIR ?= $(shell if [ -d /core ]; then echo /core; else echo $(CURDIR)/../../core_sys; fi)
 INC = -I inc -I $(CLIENT_LIB_DIR)/inc
 EXEC = bot
 

@@ -58,6 +58,8 @@ void handle_spawner(t_obj *core)
 	bool threatened = ft_is_core_threatened(core, 6);
 	unsigned long loose = ft_runner_opportunity(core);
 	bool enemy_cleared = ft_enemy_units_cleared();
+	t_obj *opp_core = ft_get_core_opponent();
+	bool open_highway = (opp_core != NULL) ? nav_is_path_to_core_open(core->pos, opp_core->pos) : true;
 
 	// 1. Opening Hyper-Runner when corridors connect to loose gems
 	if (!g_had_economy && n_carriers == 0 && n_miners == 0 && loose > 0 &&
@@ -118,13 +120,42 @@ void handle_spawner(t_obj *core)
 	}
 
 	// 6. Core Finisher once enemy units are cleared and we have Hunters guarding the enemy Core
-	if (n_hunters >= 1 && enemy_cleared)
+	bool core_perimeter_secured = false;
+	if (opp_core)
+	{
+		t_obj **own = ft_get_units_own();
+		for (int i = 0; own && own[i]; i++)
+		{
+			t_obj *u = own[i];
+			if (u->s_unit.name && strcmp(u->s_unit.name, "Hunter") == 0 &&
+				ft_distance(u->pos, opp_core->pos) <= 5)
+			{
+				core_perimeter_secured = true;
+				break;
+			}
+		}
+		if (own)
+			free(own);
+	}
+
+	if (n_hunters >= 1 && enemy_cleared && core_perimeter_secured)
 	{
 		if (n_strikers < 1)
 		{
-			if (gems >= COST_FINISHER)
+			// High-Velocity Sieger: 6 Core DMG, 6-tick CD (1.0 Core DPS)!
+			// 17 hits * 6 ticks = 102 ticks to destroy 99 HP Core!
+			if (open_highway && gems >= 262)
+			{
+				safe_create_unit(core, "Striker", 262, "siege", "siege",
+					"speed", "speed", "health", NULL);
+				return;
+			}
+			else if (gems >= COST_FINISHER)
+			{
 				safe_create_unit(core, "Striker", COST_FINISHER, "siege", "siege",
 					"demolition", "health", NULL, NULL);
+				return;
+			}
 			return;
 		}
 	}
