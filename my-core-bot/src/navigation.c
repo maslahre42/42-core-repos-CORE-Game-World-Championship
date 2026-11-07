@@ -213,6 +213,8 @@ void step_away_from_core(const t_obj *u, t_obj *core)
 		t_pos np = {(unsigned short)nx, (unsigned short)ny};
 		if (is_tile_occupied(np))
 			continue;
+		if (ft_is_pos_near_armed_enemy(np, 1))
+			continue;
 		unsigned int dist = ft_distance(np, core->pos);
 		if (dist > max_dist)
 		{
@@ -249,14 +251,9 @@ void __wrap_core_action_move(const t_obj *unit, t_pos pos)
 					return;
 			}
 			// Contest Prevention: if enemy is ready to move into pos this tick,
-			// yield to prevent simultaneous-step collision Action Failures:
+			// yield to prevent simultaneous-step collision Action Failures regardless of team id:
 			if (e->s_unit.action_cooldown <= 0 && ft_distance(pos, e->pos) <= 1)
-			{
-				if (unit->s_unit.properties.damage_unit == 0)
-					return;
-				if (game.my_team_id != 42)
-					return;
-			}
+				return;
 		}
 	}
 
@@ -315,6 +312,24 @@ void __wrap_core_action_attack(const t_obj *attacker, const t_obj *target)
 	// Universal overkill protection (entities with HP only)
 	if (t->type != OBJ_GEM_PILE && t->hp <= get_pending_damage(t->id))
 		return;
+
+	// Tie-breaker deconfliction: if opponent executes before us (my_team_id != 42),
+	// check if adjacent enemies will destroy the object this tick before our attack executes!
+	if (game.my_team_id != 42 && (t->type == OBJ_DEPOSIT || t->type == OBJ_WALL))
+	{
+		unsigned long enemy_pending_dmg = 0;
+		for (int i = 0; game.objects && game.objects[i]; i++)
+		{
+			const t_obj *e = game.objects[i];
+			if (e->type == OBJ_UNIT && e->s_unit.team_id != game.my_team_id && e->hp > 0)
+			{
+				if (e->s_unit.action_cooldown <= 0 && ft_is_adjacent(e->pos, t->pos))
+					enemy_pending_dmg += e->s_unit.properties.damage_object;
+			}
+		}
+		if (t->hp <= enemy_pending_dmg)
+			return;
+	}
 
 	unsigned long raw_dmg = 0;
 	if (t->type == OBJ_UNIT && t->s_unit.team_id != game.my_team_id)

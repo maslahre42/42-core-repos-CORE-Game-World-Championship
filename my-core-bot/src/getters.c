@@ -180,14 +180,19 @@ unsigned int ft_count_safe_resources(t_pos core_pos)
 {
 	unsigned int count = 0;
 	t_obj *opp_core = ft_get_core_opponent();
+	bool enemy_cleared = ft_enemy_units_cleared();
+
 	for (int i = 0; game.objects && game.objects[i]; i++)
 	{
 		t_obj *o = game.objects[i];
 		if (o->type != OBJ_DEPOSIT && o->type != OBJ_GEM_PILE)
 			continue;
+		if (o->s_deposit_gems_pile.gems == 0)
+			continue;
 		if (ft_is_pos_near_armed_enemy(o->pos, 3))
 			continue;
-		if (opp_core && ft_distance(o->pos, opp_core->pos) + 4 < ft_distance(o->pos, core_pos))
+		if (!enemy_cleared && game.elapsed_ticks <= 350 && opp_core &&
+			ft_distance(o->pos, opp_core->pos) + 4 < ft_distance(o->pos, core_pos))
 			continue;
 		count++;
 	}

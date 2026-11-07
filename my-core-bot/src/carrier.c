@@ -48,7 +48,7 @@ static bool carrier_evade_threat(t_obj *u, t_obj *core)
 		}
 	}
 
-	if (!closest_threat || min_threat_dist > 2)
+	if (!closest_threat || min_threat_dist > 3)
 		return false;
 
 	if (core && u->s_unit.gems > 0)

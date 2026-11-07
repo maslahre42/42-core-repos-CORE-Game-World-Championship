@@ -26,7 +26,7 @@ static bool miner_evade_threat(t_obj *u, t_obj *core, t_obj **units)
 		}
 	}
 
-	if (!closest_threat || min_threat_dist > 2)
+	if (!closest_threat || min_threat_dist > 3)
 		return false;
 
 	if (ft_count_allies_near_pos(closest_threat->pos, 1) > 0)

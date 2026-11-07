@@ -47,17 +47,18 @@ static unsigned long get_unit_wait_ticks(unsigned long unit_id, bool should_wait
 
 bool ft_enemy_units_cleared(void)
 {
-	bool enemy_alive = false;
+	bool enemy_armed_alive = false;
 	for (int i = 0; game.objects && game.objects[i]; i++)
 	{
 		const t_obj *o = game.objects[i];
 		if (o->type == OBJ_UNIT && o->s_unit.team_id != game.my_team_id && o->hp > 0)
 		{
 			g_seen_enemy_unit = true;
-			enemy_alive = true;
+			if (o->s_unit.properties.damage_unit > 0 || o->s_unit.properties.damage_core > 0)
+				enemy_armed_alive = true;
 		}
 	}
-	return (g_seen_enemy_unit && !enemy_alive) || (game.elapsed_ticks > 400 && !enemy_alive);
+	return (g_seen_enemy_unit && !enemy_armed_alive) || (game.elapsed_ticks > 350 && !enemy_armed_alive);
 }
 
 static void handle_defender(t_obj *u, t_obj *core, t_obj *opp_core, t_game_phase phase)
@@ -213,6 +214,11 @@ static void handle_hunter_or_scout(t_obj *u, t_obj *core, t_obj *opp_core,
 		unsigned int dist_core = core ? ft_distance(core->pos, e->pos) : 20;
 		bool is_unarmed = (e->s_unit.properties.damage_unit == 0 && e->s_unit.properties.damage_core == 0);
 
+		// Prevent infinite rabbit-chase: if all armed enemies are dead, do not chase distant 1-tick runners!
+		// Advance directly to enemy Core instead, where returning runners will be trapped and eliminated.
+		if (ft_enemy_units_cleared() && is_unarmed && dist_me > 3)
+			continue;
+
 		long priority = 1000 - (long)(dist_me * 50) - (long)(e->hp * 5);
 		if (e->id == shared_focus_id && dist_me <= 8)
 			priority += 700;
@@ -264,8 +270,7 @@ static void handle_hunter_or_scout(t_obj *u, t_obj *core, t_obj *opp_core,
 				e->s_unit.properties.damage_unit > 0 && e->hp > 0 &&
 				ft_distance(u->pos, e->pos) == 2 &&
 				e->s_unit.action_cooldown < move_cd &&
-				ft_has_open_melee_gap(u, e) &&
-				!ft_is_enemy_engaged_by_ally(e, u->id))
+				ft_has_open_melee_gap(u, e))
 			{
 				raw_hold = true;
 				break;
@@ -275,8 +280,6 @@ static void handle_hunter_or_scout(t_obj *u, t_obj *core, t_obj *opp_core,
 		unsigned long waited = get_unit_wait_ticks(u->id, raw_hold);
 		if (raw_hold && waited < 6)
 		{
-			if (core && ft_is_adjacent(u->pos, core->pos))
-				step_away_from_core(u, core);
 			return;
 		}
 

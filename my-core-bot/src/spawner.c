@@ -23,23 +23,15 @@ static void safe_create_unit(t_obj *core, const char *name, unsigned long cost,
 static void spawn_brawler_or_hunter(t_obj *core, unsigned long gems, unsigned int n_hunters,
 	bool emergency)
 {
+	(void)n_hunters;
+	(void)emergency;
 	// Primary Meta Fighter: 22 HP, 3-tick cooldown, 3 DMG (307 gems)
+	// Never waste gems on inferior fighters that feed the opponent's army
 	if (gems >= COST_BRAWLER_HEAVY)
 	{
 		safe_create_unit(core, "Hunter", COST_BRAWLER_HEAVY, "combat", "health",
 			"health", "health", "speed", "speed");
 		return;
-	}
-
-	// Emergency panic fallback ONLY if enemy is right at our Core (dist <= 4) and we have 0 fighters
-	if (emergency && n_hunters == 0 && ft_is_core_threatened(core, 4))
-	{
-		if (gems >= COST_SKIRMISHER)
-			safe_create_unit(core, "Hunter", COST_SKIRMISHER, "combat", "health",
-				"speed", "speed", NULL, NULL);
-		else if (gems >= COST_HUNTER_TANK)
-			safe_create_unit(core, "Hunter", COST_HUNTER_TANK, "combat",
-				"combat", "health", NULL, NULL, NULL);
 	}
 }
 
@@ -83,11 +75,6 @@ void handle_spawner(t_obj *core)
 		spawn_brawler_or_hunter(core, gems, n_hunters, true);
 		return;
 	}
-	if (ft_is_core_threatened(core, 4) && (n_hunters + n_defenders == 0) && gems >= COST_HUNTER_TANK)
-	{
-		spawn_brawler_or_hunter(core, gems, n_hunters, true);
-		return;
-	}
 
 	// 3. Ensure at least 1 Carrier is active whenever loose gems exist
 	if (n_carriers < 1 && loose > 0)
@@ -103,6 +90,7 @@ void handle_spawner(t_obj *core)
 			safe_create_unit(core, "Carrier", 152, "speed", "speed", NULL, NULL, NULL, NULL);
 			return;
 		}
+		return;
 	}
 
 	// 4. First Fast Digger (or solo Miner if no Carrier exists)
