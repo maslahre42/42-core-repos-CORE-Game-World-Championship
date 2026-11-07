@@ -155,7 +155,7 @@ void add_pending_unit_gems(unsigned long id, unsigned long amount)
 	}
 }
 
-static bool is_tile_occupied(t_pos pos)
+bool is_tile_occupied(t_pos pos)
 {
 	if (!is_pos_in_bounds(pos))
 		return true;
@@ -234,6 +234,32 @@ void __wrap_core_action_move(const t_obj *unit, t_pos pos)
 	if (is_tile_occupied(pos))
 		return;
 
+	// Dynamic Safety & Collision Avoidance:
+	t_obj *core = ft_get_core_own();
+	for (int i = 0; game.objects && game.objects[i]; i++)
+	{
+		const t_obj *e = game.objects[i];
+		if (e->type == OBJ_UNIT && e->s_unit.team_id != game.my_team_id && e->hp > 0)
+		{
+			// Unarmed workers: never step adjacent to an armed enemy (except when hugging Core)
+			if (unit->s_unit.properties.damage_unit == 0 && e->s_unit.properties.damage_unit > 0 &&
+				ft_distance(pos, e->pos) <= 1)
+			{
+				if (!core || !ft_is_adjacent(pos, core->pos))
+					return;
+			}
+			// Contest Prevention: if enemy is ready to move into pos this tick,
+			// yield to prevent simultaneous-step collision Action Failures:
+			if (e->s_unit.action_cooldown <= 0 && ft_distance(pos, e->pos) <= 1)
+			{
+				if (unit->s_unit.properties.damage_unit == 0)
+					return;
+				if (game.my_team_id != 42)
+					return;
+			}
+		}
+	}
+
 	g_moved_to_tile[pos.x][pos.y] = true;
 	mark_unit_acted(unit->id);
 	__real_core_action_move(unit, pos);
@@ -269,7 +295,8 @@ void __wrap_core_action_attack(const t_obj *attacker, const t_obj *target)
 			return;
 		if (attacker->s_unit.gems >= attacker->s_unit.properties.max_gems)
 			return;
-		if (t->s_deposit_gems_pile.gems <= get_pending_pile_gems(t->id))
+		// Single claimant per tick: only ONE unit may harvest a gem pile in a tick!
+		if (get_pending_pile_gems(t->id) > 0)
 			return;
 		// Deconflict: if any enemy unit is adjacent, opponent could harvest it first in server tick order
 		if (ft_is_enemy_adjacent_to_pos(t->pos))
@@ -313,9 +340,7 @@ void __wrap_core_action_attack(const t_obj *attacker, const t_obj *target)
 	}
 	else if (t->type == OBJ_GEM_PILE)
 	{
-		unsigned long space = attacker->s_unit.properties.max_gems - attacker->s_unit.gems;
-		unsigned long gain = (t->s_deposit_gems_pile.gems < space) ? t->s_deposit_gems_pile.gems : space;
-		add_pending_pile_gems(t->id, gain);
+		add_pending_pile_gems(t->id, t->s_deposit_gems_pile.gems ? t->s_deposit_gems_pile.gems : 1);
 	}
 
 	mark_unit_acted(attacker->id);
@@ -397,9 +422,15 @@ t_tile_travelability safe_travelability(t_pos pos, const t_obj *unit)
 			res.action = CORE_TRAVEL_BLOCK;
 			return res;
 		}
-		// Unarmed units (Carriers, Miners, Speed Siegers) route around enemy melee range!
+		// Unarmed units (Carriers, Miners, Speed Siegers) NEVER step into enemy melee range!
 		if (unit && unit->s_unit.properties.damage_unit == 0)
 		{
+			if (get_tile_enemy_danger(pos) >= 500)
+			{
+				res.weight = 10000;
+				res.action = CORE_TRAVEL_BLOCK;
+				return res;
+			}
 			res.weight += get_tile_enemy_danger(pos);
 		}
 		return res;
@@ -416,9 +447,22 @@ t_tile_travelability safe_travelability(t_pos pos, const t_obj *unit)
 			return res;
 		}
 
+		// BUG #1 FIX: Fast Diggers (Miner with max_gems <= 20) MUST NOT attack Gem Piles
+		// while pathfinding if a Carrier exists and can collect the pile!
+		if (unit && unit->s_unit.name && strcmp(unit->s_unit.name, "Miner") == 0 &&
+			unit->s_unit.properties.max_gems <= 20 &&
+			core_get_units_byName_count("Carrier") > 0 &&
+			ft_carrier_can_reach_pile(obj, ft_get_core_own()))
+		{
+			res.weight = 10000;
+			res.action = CORE_TRAVEL_BLOCK;
+			return res;
+		}
+
+		// A unit can only traverse through a Gem Pile by emptying it completely
 		unsigned long room = (unit && unit->s_unit.properties.max_gems > unit->s_unit.gems)
 			? (unit->s_unit.properties.max_gems - unit->s_unit.gems) : 0;
-		if (room > 0 && unit && unit->s_unit.properties.gems_per_cooldown_step > 0)
+		if (room >= obj->s_deposit_gems_pile.gems && unit && unit->s_unit.properties.gems_per_cooldown_step > 0)
 		{
 			res.weight = 2;
 			res.action = CORE_TRAVEL_ATTACK;
@@ -435,7 +479,7 @@ t_tile_travelability safe_travelability(t_pos pos, const t_obj *unit)
 	{
 		if (unit && unit->s_unit.properties.damage_object > 0)
 		{
-			res.weight = (obj->hp + unit->s_unit.properties.damage_object - 1) / unit->s_unit.properties.damage_object;
+			res.weight = 2 + (obj->hp + unit->s_unit.properties.damage_object - 1) / unit->s_unit.properties.damage_object;
 			res.action = CORE_TRAVEL_ATTACK;
 		}
 		else
@@ -450,12 +494,22 @@ t_tile_travelability safe_travelability(t_pos pos, const t_obj *unit)
 	{
 		if (obj->s_unit.team_id == game.my_team_id)
 		{
-			res.weight = 10000;
-			res.action = CORE_TRAVEL_BLOCK;
+			// BUG #6 FIX: Only block immediate next step (distance 1).
+			// Friendly units at distance >= 2 will vacate future corridor tiles!
+			if (unit && ft_distance(unit->pos, pos) <= 1)
+			{
+				res.weight = 10000;
+				res.action = CORE_TRAVEL_BLOCK;
+			}
+			else
+			{
+				res.weight = 8;
+				res.action = CORE_TRAVEL_PASS;
+			}
 		}
 		else if (unit && unit->s_unit.properties.damage_unit > 0)
 		{
-			res.weight = (obj->hp + unit->s_unit.properties.damage_unit - 1) / unit->s_unit.properties.damage_unit;
+			res.weight = 2 + (obj->hp + unit->s_unit.properties.damage_unit - 1) / unit->s_unit.properties.damage_unit;
 			res.action = CORE_TRAVEL_ATTACK;
 		}
 		else
@@ -516,8 +570,10 @@ void safe_travel(const t_obj *u, t_pos target)
 			}
 			else if (!is_tile_occupied(np))
 			{
+				if (u->s_unit.properties.damage_unit == 0 && get_tile_enemy_danger(np) >= 500)
+					continue;
 				unsigned int dist = ft_distance(np, target);
-				if (dist <= best_d)
+				if (dist < best_d)
 				{
 					best_d = dist;
 					best_step = np;
@@ -564,10 +620,10 @@ void nav_compute_corridor_distances(t_pos start, unsigned int dist[MAX_GRID_SIZE
 		if (is_unarmed && o->type == OBJ_UNIT && o->s_unit.team_id != game.my_team_id &&
 			o->s_unit.properties.damage_unit > 0)
 		{
-			for (int dy = -2; dy <= 2; dy++)
-				for (int dx = -2; dx <= 2; dx++)
+			for (int dy = -1; dy <= 1; dy++)
+				for (int dx = -1; dx <= 1; dx++)
 				{
-					if (abs(dx) + abs(dy) <= 2)
+					if (abs(dx) + abs(dy) <= 1)
 					{
 						int ex = (int)o->pos.x + dx;
 						int ey = (int)o->pos.y + dy;
@@ -665,6 +721,142 @@ unsigned long ft_runner_opportunity(const t_obj *core)
 	return total_safe_gems;
 }
 
+bool ft_carrier_can_reach_pile(const t_obj *pile, const t_obj *core)
+{
+	if (!core || !pile || pile->type != OBJ_GEM_PILE || pile->s_deposit_gems_pile.gems == 0)
+		return false;
+	if (ft_is_pos_near_armed_enemy(pile->pos, 3))
+		return false;
+
+	const t_obj *carrier = NULL;
+	for (int i = 0; game.objects && game.objects[i]; i++)
+	{
+		const t_obj *o = game.objects[i];
+		if (o->type == OBJ_UNIT && o->s_unit.team_id == game.my_team_id &&
+			o->s_unit.name && strcmp(o->s_unit.name, "Carrier") == 0)
+		{
+			carrier = o;
+			break;
+		}
+	}
+	if (!carrier)
+		return false;
+
+	static unsigned long cached_tick = ULONG_MAX;
+	static unsigned long cached_id = 0;
+	static t_pos cached_pos = {0, 0};
+	static unsigned int out_dist[MAX_GRID_SIZE][MAX_GRID_SIZE];
+	static unsigned int home_dist[MAX_GRID_SIZE][MAX_GRID_SIZE];
+
+	if (cached_tick != game.elapsed_ticks || cached_id != carrier->id ||
+		ft_distance(cached_pos, carrier->pos) > 0)
+	{
+		cached_tick = game.elapsed_ticks;
+		cached_id = carrier->id;
+		cached_pos = carrier->pos;
+		nav_compute_corridor_distances(carrier->pos, out_dist, true, carrier->id);
+		nav_compute_corridor_distances(core->pos, home_dist, true, carrier->id);
+	}
+
+	unsigned int app_out = nav_approach_distance(pile->pos, out_dist);
+	unsigned int app_home = nav_approach_distance(pile->pos, home_dist);
+	return (app_out < INF_DIST && app_home < INF_DIST);
+}
+
+void nav_compute_finisher_lane(t_pos start, t_pos goal, bool lane[MAX_GRID_SIZE][MAX_GRID_SIZE])
+{
+	memset(lane, 0, sizeof(bool) * MAX_GRID_SIZE * MAX_GRID_SIZE);
+	if (!is_pos_in_bounds(start) || !is_pos_in_bounds(goal))
+		return;
+
+	unsigned int dist[MAX_GRID_SIZE][MAX_GRID_SIZE];
+	t_pos parent[MAX_GRID_SIZE][MAX_GRID_SIZE];
+	bool visited[MAX_GRID_SIZE][MAX_GRID_SIZE];
+
+	for (unsigned int y = 0; y < game.grid_size && y < MAX_GRID_SIZE; y++)
+	{
+		for (unsigned int x = 0; x < game.grid_size && x < MAX_GRID_SIZE; x++)
+		{
+			dist[y][x] = UINT_MAX / 2;
+			visited[y][x] = false;
+			parent[y][x] = (t_pos){65535, 65535};
+		}
+	}
+	dist[start.y][start.x] = 0;
+
+	const int dx[4] = {1, -1, 0, 0};
+	const int dy[4] = {0, 0, 1, -1};
+
+	for (unsigned int iter = 0; iter < game.grid_size * game.grid_size; iter++)
+	{
+		unsigned int min_d = UINT_MAX / 2;
+		int bx = -1, by = -1;
+		for (unsigned int y = 0; y < game.grid_size && y < MAX_GRID_SIZE; y++)
+		{
+			for (unsigned int x = 0; x < game.grid_size && x < MAX_GRID_SIZE; x++)
+			{
+				if (!visited[y][x] && dist[y][x] < min_d)
+				{
+					min_d = dist[y][x];
+					bx = (int)x;
+					by = (int)y;
+				}
+			}
+		}
+		if (bx == -1 || min_d >= UINT_MAX / 4)
+			break;
+		visited[by][bx] = true;
+		t_pos curr_pos = {(unsigned short)bx, (unsigned short)by};
+
+		if (ft_distance(curr_pos, goal) == 1)
+		{
+			t_pos trace = curr_pos;
+			while (true)
+			{
+				lane[trace.y][trace.x] = true;
+				if (trace.x == start.x && trace.y == start.y)
+					break;
+				t_pos p = parent[trace.y][trace.x];
+				if (p.x == 65535 && p.y == 65535)
+					break;
+				trace = p;
+			}
+			return;
+		}
+
+		for (int d = 0; d < 4; d++)
+		{
+			int nx = bx + dx[d];
+			int ny = by + dy[d];
+			if (nx < 0 || ny < 0 || nx >= (int)game.grid_size || ny >= (int)game.grid_size)
+				continue;
+			if (visited[ny][nx])
+				continue;
+			t_pos np = {(unsigned short)nx, (unsigned short)ny};
+			t_obj *obj = core_get_obj_from_pos(np);
+			unsigned int weight = 1;
+			if (obj)
+			{
+				if (obj->type == OBJ_CORE)
+					continue;
+				if (obj->type == OBJ_WALL || obj->type == OBJ_DEPOSIT)
+					weight = 2 + (obj->hp + 2) / 3;
+				else if (obj->type == OBJ_GEM_PILE && obj->s_deposit_gems_pile.gems > 16)
+					continue;
+			}
+			// Prefer diagonal approach at distance 2 so cardinal guard posts stay free
+			if (ft_distance(np, goal) == 2 && (np.x == goal.x || np.y == goal.y))
+				weight += 50;
+
+			if (dist[by][bx] + weight < dist[ny][nx])
+			{
+				dist[ny][nx] = dist[by][bx] + weight;
+				parent[ny][nx] = curr_pos;
+			}
+		}
+	}
+}
+
 void nav_yield_for_workers(t_obj *core, t_obj *enemy_core, t_obj **units)
 {
 	if (!core || !units)
@@ -698,6 +890,10 @@ void nav_yield_for_workers(t_obj *core, t_obj *enemy_core, t_obj **units)
 		bool blocking_spawn = (has_workers && ft_distance(u->pos, core->pos) == 1);
 
 		if (!requested && !blocking_spawn)
+			continue;
+
+		// Combat Priority: NEVER yield corridor if an armed enemy is within 6 tiles!
+		if (ft_is_pos_near_armed_enemy(u->pos, 6))
 			continue;
 
 		// Fight adjacent enemies instead of giving up an active interception!
@@ -738,4 +934,125 @@ void nav_yield_for_workers(t_obj *core, t_obj *enemy_core, t_obj **units)
 			core_debug_addObjectInfo(u, "Yielded corridor to (%u,%u)", destination.x, destination.y);
 		}
 	}
+}
+
+t_obj *nav_find_highway_obstacle(t_pos start, t_pos goal)
+{
+	if (!is_pos_in_bounds(start) || !is_pos_in_bounds(goal))
+		return NULL;
+
+	unsigned int dist[MAX_GRID_SIZE][MAX_GRID_SIZE];
+	t_pos parent[MAX_GRID_SIZE][MAX_GRID_SIZE];
+	bool visited[MAX_GRID_SIZE][MAX_GRID_SIZE];
+
+	for (unsigned int y = 0; y < game.grid_size && y < MAX_GRID_SIZE; y++)
+	{
+		for (unsigned int x = 0; x < game.grid_size && x < MAX_GRID_SIZE; x++)
+		{
+			dist[y][x] = UINT_MAX / 2;
+			visited[y][x] = false;
+			parent[y][x] = (t_pos){65535, 65535};
+		}
+	}
+
+	dist[start.y][start.x] = 0;
+
+	for (unsigned int iter = 0; iter < game.grid_size * game.grid_size; iter++)
+	{
+		unsigned int min_d = UINT_MAX / 2;
+		int bx = -1, by = -1;
+
+		for (unsigned int y = 0; y < game.grid_size && y < MAX_GRID_SIZE; y++)
+		{
+			for (unsigned int x = 0; x < game.grid_size && x < MAX_GRID_SIZE; x++)
+			{
+				if (!visited[y][x] && dist[y][x] < min_d)
+				{
+					min_d = dist[y][x];
+					bx = (int)x;
+					by = (int)y;
+				}
+			}
+		}
+
+		if (bx == -1 || min_d >= UINT_MAX / 4)
+			break;
+
+		visited[by][bx] = true;
+		if (bx == (int)goal.x && by == (int)goal.y)
+			break;
+
+		const int dx[4] = {1, -1, 0, 0};
+		const int dy[4] = {0, 0, 1, -1};
+
+		for (int d = 0; d < 4; d++)
+		{
+			int nx = bx + dx[d];
+			int ny = by + dy[d];
+			if (nx < 0 || ny < 0 || nx >= (int)game.grid_size || ny >= (int)game.grid_size)
+				continue;
+			if (visited[ny][nx])
+				continue;
+
+			t_pos np = {(unsigned short)nx, (unsigned short)ny};
+			t_obj *obj = core_get_obj_from_pos(np);
+
+			unsigned int weight = 1;
+			if (obj)
+			{
+				if (obj->type == OBJ_WALL || obj->type == OBJ_DEPOSIT)
+					weight = 10 + (obj->hp * 2);
+				else if (obj->type == OBJ_CORE)
+				{
+					if (nx != (int)goal.x || ny != (int)goal.y)
+						continue;
+				}
+				else if (obj->type == OBJ_UNIT)
+				{
+					if (obj->s_unit.team_id == game.my_team_id)
+						weight = 2;
+					else
+						weight = 5;
+				}
+			}
+
+			if (dist[by][bx] + weight < dist[ny][nx])
+			{
+				dist[ny][nx] = dist[by][bx] + weight;
+				parent[ny][nx] = (t_pos){(unsigned short)bx, (unsigned short)by};
+			}
+		}
+	}
+
+	if (dist[goal.y][goal.x] >= UINT_MAX / 4)
+		return NULL;
+
+	t_pos path[MAX_GRID_SIZE * MAX_GRID_SIZE];
+	unsigned int path_len = 0;
+	t_pos curr = goal;
+
+	while (curr.x != start.x || curr.y != start.y)
+	{
+		if (path_len < MAX_GRID_SIZE * MAX_GRID_SIZE)
+			path[path_len++] = curr;
+		t_pos p = parent[curr.y][curr.x];
+		if (p.x == 65535 && p.y == 65535)
+			break;
+		curr = p;
+	}
+
+	for (int i = (int)path_len - 1; i >= 0; i--)
+	{
+		t_pos p = path[i];
+		t_obj *o = core_get_obj_from_pos(p);
+		if (o && (o->type == OBJ_WALL || o->type == OBJ_DEPOSIT))
+			return o;
+	}
+
+	return NULL;
+}
+
+bool nav_is_path_to_core_open(t_pos start, t_pos goal)
+{
+	return (nav_find_highway_obstacle(start, goal) == NULL);
 }

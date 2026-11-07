@@ -21,6 +21,7 @@ typedef enum e_game_phase
 #define COST_CARRIER          137 // base (42) + speed (55) + max_gems (40)
 #define COST_DIGGER           187 // base (42) + demolition (35) + 2x speed (110) -> 3cd, 3 obj dmg!
 #define COST_MINER            187 // Upgraded miner recipe ("demolition", "speed", "speed")
+#define COST_MINER_STARTER    172 // base (42) + demolition (35) + speed (55) + max_gems (40) -> 5cd, 166 cap, solo opener
 #define COST_MINER_SOLO       117 // base (42) + demolition (35) + max_gems (40)
 #define COST_SCOUT            132 // base (42) + combat (35) + speed (55)
 #define COST_DEFENDER         152 // base (42) + combat (35) + health (40) + armor (35)
@@ -28,6 +29,8 @@ typedef enum e_game_phase
 #define COST_HUNTER_SPEED     167 // base (42) + combat (35) + combat (35) + speed (55) -> 7 HP, 6 DMG, fast!
 #define COST_BRAWLER_MED      247 // base (42) + 2x combat (70) + 2x health (80) + speed (55) -> 17 HP, 6 DMG, 5cd (5 components)
 #define COST_BRAWLER_HEAVY    307 // base (42) + combat (35) + 3x health (120) + 2x speed (110) -> 22 HP, 3 DMG, 3cd (6 components - MAX)
+#define COST_SKIRMISHER       227 // base (42) + combat (35) + health (40) + 2x speed (110) -> 10 HP, 3 DMG, 3cd (4 components)
+#define COST_FAST_SCOUT       187 // base (42) + combat (35) + 2x speed (110) -> 4 HP, 3 DMG, 3cd (3 components)
 #define COST_SWORD            307 // Monir counter-loadout: 22 HP, 3cd, 3 DMG (6 components)
 #define COST_FINISHER         187 // base (42) + 2x siege (70) + demolition (35) + health (40) -> 6 core dmg, 3 obj dmg
 #define COST_STRIKER_SPEED    167 // base (42) + combat (35) + siege (35) + speed (55)
@@ -40,6 +43,7 @@ typedef enum e_game_phase
 unsigned int ft_distance(t_pos a, t_pos b);
 bool ft_is_adjacent(t_pos a, t_pos b);
 bool is_pos_in_bounds(t_pos pos);
+bool is_tile_occupied(t_pos pos);
 bool has_free_spawn_tile(t_pos core_pos);
 bool has_unit_acted(unsigned long id);
 void step_away_from_core(const t_obj *u, t_obj *core);
@@ -59,9 +63,13 @@ void safe_travel(const t_obj *u, t_pos target);
 void nav_compute_corridor_distances(t_pos start, unsigned int dist[MAX_GRID_SIZE][MAX_GRID_SIZE], bool is_unarmed, unsigned long ignore_id);
 unsigned int nav_approach_distance(t_pos target, const unsigned int dist[MAX_GRID_SIZE][MAX_GRID_SIZE]);
 unsigned long ft_runner_opportunity(const t_obj *core);
+bool ft_carrier_can_reach_pile(const t_obj *pile, const t_obj *core);
+void nav_compute_finisher_lane(t_pos start, t_pos goal, bool lane[MAX_GRID_SIZE][MAX_GRID_SIZE]);
 void nav_request_yield(t_pos pos);
 void nav_yield_for_workers(t_obj *core, t_obj *enemy_core, t_obj **units);
 bool ft_enemy_units_cleared(void);
+t_obj *nav_find_highway_obstacle(t_pos start, t_pos goal);
+bool nav_is_path_to_core_open(t_pos start, t_pos goal);
 
 // Core getters
 t_obj *ft_get_core_own(void);
@@ -88,6 +96,7 @@ unsigned int ft_count_allies_near_pos(t_pos pos, unsigned int radius);
 
 // 3-Phase & First-Strike tactical analyzers
 t_game_phase ft_get_game_phase(t_obj *core, t_obj *opp_core);
+bool ft_has_open_melee_gap(const t_obj *u, const t_obj *enemy);
 bool ft_should_hold_for_first_strike(const t_obj *u, const t_obj *target);
 bool ft_is_enemy_engaged_by_ally(const t_obj *enemy, unsigned long exclude_unit_id);
 

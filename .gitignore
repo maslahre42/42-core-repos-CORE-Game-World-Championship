@@ -14,3 +14,6 @@ core_sys/
 # Hall of fame binaries
 hall_of_fame/*
 !hall_of_fame/best_genome.json
+
+scratch_*
+*.zip

@@ -267,7 +267,35 @@ bool ft_is_enemy_engaged_by_ally(const t_obj *enemy, unsigned long exclude_unit_
 	return false;
 }
 
-// Bounded Distance-2 First-Strike Ambush:
+// Verifies that an open cardinal tile exists at Manhattan distance 1 from both u and enemy
+bool ft_has_open_melee_gap(const t_obj *u, const t_obj *enemy)
+{
+	if (!u || !enemy)
+		return false;
+
+	const int dx[4] = {1, 0, -1, 0};
+	const int dy[4] = {0, 1, 0, -1};
+
+	for (int d = 0; d < 4; d++)
+	{
+		int x = (int)u->pos.x + dx[d];
+		int y = (int)u->pos.y + dy[d];
+		if (x < 0 || y < 0 || x >= (int)game.grid_size || y >= (int)game.grid_size)
+			continue;
+		t_pos p = {(unsigned short)x, (unsigned short)y};
+		if (ft_distance(p, enemy->pos) != 1)
+			continue;
+
+		const t_obj *o = core_get_obj_from_pos(p);
+		if (!o || (o->type == OBJ_GEM_PILE &&
+			o->s_deposit_gems_pile.gems <= u->s_unit.properties.max_gems - u->s_unit.gems))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 bool ft_should_hold_for_first_strike(const t_obj *u, const t_obj *target)
 {
 	if (!u || !target || target->type != OBJ_UNIT)
@@ -276,26 +304,22 @@ bool ft_should_hold_for_first_strike(const t_obj *u, const t_obj *target)
 	if (ft_distance(u->pos, target->pos) != 2)
 		return false;
 
-	// Never wait against unarmed units
 	if (target->s_unit.properties.damage_unit == 0)
 		return false;
 
-	// If an ally is also within distance <= 2 of this enemy, we have a 2v1 gang-up advantage:
-	// NEVER wait—both units collapse immediately and shred the enemy!
 	if (ft_is_enemy_engaged_by_ally(target, u->id))
 		return false;
 
-	// Bounded wait: if we have already waited 4+ ticks (action_cooldown <= -4), break the standoff and attack!
+	if (!ft_has_open_melee_gap(u, target))
+		return false;
+
 	if (u->s_unit.action_cooldown <= -4)
 		return false;
 
 	long enemy_cd = target->s_unit.action_cooldown;
 	long my_base_cd = (long)u->s_unit.properties.base_action_cooldown;
 
-	if (enemy_cd >= my_base_cd)
-		return false;
-
-	if (enemy_cd <= -5)
+	if (enemy_cd >= my_base_cd || enemy_cd <= -5)
 		return false;
 
 	return true;
@@ -383,41 +407,48 @@ static bool is_claimed_by_other_miner(t_pos res_pos, unsigned long my_id)
 
 t_obj *ft_get_resource_for_miner(t_pos unit_pos, t_pos core_pos, unsigned long unit_id)
 {
+	t_obj *core = ft_get_core_own();
 	t_obj *opp_core = ft_get_core_opponent();
 	t_obj *best = NULL;
-	unsigned int best_score = UINT_MAX;
+	long best_score = LONG_MIN;
 	unsigned int n_carriers = core_get_units_byName_count("Carrier");
 
 	for (int i = 0; game.objects && game.objects[i]; i++)
 	{
 		t_obj *obj = game.objects[i];
-		// If carriers exist, miners NEVER target gem piles; they focus 100% on demolishing deposits!
-		if (n_carriers > 0 && obj->type != OBJ_DEPOSIT)
-			continue;
 		if (obj->type != OBJ_DEPOSIT && obj->type != OBJ_GEM_PILE)
 			continue;
+		if (obj->s_deposit_gems_pile.gems == 0)
+			continue;
 
-		// CRITICAL SAFETY FILTER (from Monir's miner.c):
-		// Never send a Miner to a resource guarded by an armed enemy within distance 3!
+		// If Carrier can reach a Gem Pile, leave it for the Carrier!
+		if (obj->type == OBJ_GEM_PILE && n_carriers > 0 &&
+			ft_carrier_can_reach_pile(obj, core))
+		{
+			continue;
+		}
+
 		if (ft_is_pos_near_armed_enemy(obj->pos, 3))
 			continue;
-		if (obj->type == OBJ_GEM_PILE && ft_is_enemy_adjacent_to_pos(obj->pos))
+
+		if (is_claimed_by_other_miner(obj->pos, unit_id))
 			continue;
 
 		unsigned int dist_u = ft_distance(unit_pos, obj->pos);
 		unsigned int dist_c = ft_distance(core_pos, obj->pos);
-		unsigned int score = dist_u * RES_DIST_UNIT_WEIGHT + dist_c * RES_DIST_CORE_WEIGHT;
+		long score = 1000 - (long)(dist_u * 25) - (long)(dist_c * 12);
+		if (opp_core && ft_distance(opp_core->pos, obj->pos) <= dist_c)
+			score -= 250;
 
-		// Avoid deposits right next to the enemy Core in the early/mid game
-		if (opp_core && ft_distance(obj->pos, opp_core->pos) <= dist_c)
-			score += 80;
+		if (obj->type == OBJ_DEPOSIT)
+		{
+			score -= 180 + (long)(obj->hp * 3);
+			// With an active Carrier, strongly prioritize cracking Deposits over locked piles
+			if (n_carriers > 0)
+				score += 10000;
+		}
 
-		if (is_claimed_by_other_miner(obj->pos, unit_id))
-			score += RES_CLAIMED_PENALTY;
-
-		score += ((unit_id * 11 + obj->id) % 3);
-
-		if (score < best_score)
+		if (score > best_score)
 		{
 			best_score = score;
 			best = obj;
