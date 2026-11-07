@@ -18,3 +18,4 @@ hall_of_fame/*
 scratch_*
 *.zip
 __pycache__/
+.agents/
