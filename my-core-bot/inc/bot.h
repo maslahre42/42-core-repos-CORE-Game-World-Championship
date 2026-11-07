@@ -84,6 +84,7 @@ unsigned int ft_count_walls(void);
 t_obj *ft_get_wall_nearest(t_pos pos);
 bool ft_is_pos_near_armed_enemy(t_pos pos, unsigned int radius);
 bool ft_is_enemy_adjacent_to_pos(t_pos pos);
+unsigned int ft_count_allies_near_pos(t_pos pos, unsigned int radius);
 
 // 3-Phase & First-Strike tactical analyzers
 t_game_phase ft_get_game_phase(t_obj *core, t_obj *opp_core);

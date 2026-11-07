@@ -79,6 +79,22 @@ bool ft_is_enemy_adjacent_to_pos(t_pos pos)
 	return false;
 }
 
+unsigned int ft_count_allies_near_pos(t_pos pos, unsigned int radius)
+{
+	unsigned int count = 0;
+	for (int i = 0; game.objects && game.objects[i]; i++)
+	{
+		const t_obj *o = game.objects[i];
+		if (o->type == OBJ_UNIT && o->s_unit.team_id == game.my_team_id &&
+			o->s_unit.properties.damage_unit > 0 && o->hp > 0 &&
+			ft_distance(o->pos, pos) <= radius)
+		{
+			count++;
+		}
+	}
+	return count;
+}
+
 // Overkill-aware, focus-fire adjacent target selector
 t_obj *ft_get_best_adjacent_enemy(const t_obj *attacker)
 {
