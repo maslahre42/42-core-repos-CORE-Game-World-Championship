@@ -1,6 +1,6 @@
 #include "bot.h"
 
-static bool is_pile_contested_by_enemy(t_pos pile_pos, unsigned int my_trip)
+static bool is_pile_contested_by_enemy(t_pos pile_pos, unsigned int my_trip, bool perimeter_secured)
 {
 	for (int i = 0; game.objects && game.objects[i]; i++)
 	{
@@ -13,7 +13,12 @@ static bool is_pile_contested_by_enemy(t_pos pile_pos, unsigned int my_trip)
 		if (enemy->s_unit.properties.damage_unit > 0 && edist <= 3)
 			return true;
 
-		// For unarmed enemy collectors, compare actual ticks to arrive (including enemy base cooldown)
+		// Midline Carrier Freedom: When perimeter is secured by allied Hunters,
+		// pinned unarmed enemy units cannot artificially restrict Carrier collection!
+		if (perimeter_secured && (enemy->s_unit.properties.damage_unit == 0 || ft_is_enemy_engaged_by_ally(enemy, 0)))
+			continue;
+
+		// For unarmed enemy collectors in non-secured zones, compare actual ticks to arrive
 		unsigned int enemy_cd = (enemy->s_unit.properties.base_action_cooldown > 0)
 			? (unsigned int)enemy->s_unit.properties.base_action_cooldown : 1;
 		unsigned int enemy_wait = (enemy->s_unit.action_cooldown > 0)
@@ -153,6 +158,8 @@ void handle_carrier(t_obj *core, t_obj **units)
 	if (!core)
 		return;
 
+	t_obj *opp_core = ft_get_core_opponent();
+	bool perimeter_secured = ft_is_perimeter_secured(core, opp_core);
 	unsigned long claimed_piles[64];
 	unsigned int n_claimed_piles = 0;
 
@@ -208,7 +215,7 @@ void handle_carrier(t_obj *core, t_obj **units)
 				unsigned int home = nav_approach_distance(o->pos, home_dist);
 				if (trip >= (UINT_MAX / 4) || home >= (UINT_MAX / 4))
 					continue;
-				if (is_pile_contested_by_enemy(o->pos, trip))
+				if (is_pile_contested_by_enemy(o->pos, trip, perimeter_secured))
 					continue;
 
 				unsigned long space = capacity - carried;

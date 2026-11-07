@@ -176,11 +176,37 @@ unsigned int ft_count_active_resources(void)
 	return count;
 }
 
+bool ft_is_perimeter_secured(const t_obj *core, const t_obj *opp_core)
+{
+	if (!core || !opp_core)
+		return false;
+	if (ft_enemy_units_cleared())
+		return true;
+	unsigned int d_cores = ft_distance(core->pos, opp_core->pos);
+	t_obj **own = ft_get_units_own();
+	int hunters_forward = 0;
+	for (int i = 0; own && own[i]; i++)
+	{
+		t_obj *u = own[i];
+		if (u->s_unit.name && strcmp(u->s_unit.name, "Hunter") == 0 && u->hp > 0)
+		{
+			unsigned int d_opp = ft_distance(u->pos, opp_core->pos);
+			if (d_opp <= d_cores / 2 || d_opp <= 6)
+				hunters_forward++;
+		}
+	}
+	if (own)
+		free(own);
+	return (hunters_forward >= 1);
+}
+
 unsigned int ft_count_safe_resources(t_pos core_pos)
 {
 	unsigned int count = 0;
 	t_obj *opp_core = ft_get_core_opponent();
+	t_obj *core = ft_get_core_own();
 	bool enemy_cleared = ft_enemy_units_cleared();
+	bool perimeter_secured = ft_is_perimeter_secured(core, opp_core);
 
 	for (int i = 0; game.objects && game.objects[i]; i++)
 	{
@@ -191,7 +217,7 @@ unsigned int ft_count_safe_resources(t_pos core_pos)
 			continue;
 		if (ft_is_pos_near_armed_enemy(o->pos, 3))
 			continue;
-		if (!enemy_cleared && game.elapsed_ticks <= 350 && opp_core &&
+		if (!enemy_cleared && !perimeter_secured && game.elapsed_ticks <= 350 && opp_core &&
 			ft_distance(o->pos, opp_core->pos) + 4 < ft_distance(o->pos, core_pos))
 			continue;
 		count++;
@@ -418,6 +444,10 @@ t_obj *ft_get_resource_for_miner(t_pos unit_pos, t_pos core_pos, unsigned long u
 	long best_score = LONG_MIN;
 	unsigned int n_carriers = core_get_units_byName_count("Carrier");
 
+	unsigned int dist_grid[MAX_GRID_SIZE][MAX_GRID_SIZE];
+	nav_compute_corridor_distances(unit_pos, dist_grid, true, unit_id);
+	bool perimeter_secured = ft_is_perimeter_secured(core, opp_core);
+
 	for (int i = 0; game.objects && game.objects[i]; i++)
 	{
 		t_obj *obj = game.objects[i];
@@ -439,10 +469,12 @@ t_obj *ft_get_resource_for_miner(t_pos unit_pos, t_pos core_pos, unsigned long u
 		if (is_claimed_by_other_miner(obj->pos, unit_id))
 			continue;
 
-		unsigned int dist_u = ft_distance(unit_pos, obj->pos);
+		unsigned int app_dist = nav_approach_distance(obj->pos, dist_grid);
+		bool in_open_corridor = (app_dist < INF_DIST);
+		unsigned int dist_u = in_open_corridor ? app_dist : ft_distance(unit_pos, obj->pos);
 		unsigned int dist_c = ft_distance(core_pos, obj->pos);
 		long score = 1000 - (long)(dist_u * 25) - (long)(dist_c * 12);
-		if (opp_core && ft_distance(opp_core->pos, obj->pos) <= dist_c)
+		if (!perimeter_secured && opp_core && ft_distance(opp_core->pos, obj->pos) <= dist_c)
 			score -= 250;
 
 		if (obj->type == OBJ_DEPOSIT)
@@ -451,6 +483,8 @@ t_obj *ft_get_resource_for_miner(t_pos unit_pos, t_pos core_pos, unsigned long u
 			// With an active Carrier, strongly prioritize cracking Deposits over locked piles
 			if (n_carriers > 0)
 				score += 10000;
+			if (in_open_corridor)
+				score += 50000;
 		}
 
 		if (score > best_score)

@@ -1,0 +1,56 @@
+[
+  {
+    "opp": "my-core-bot/bot",
+    "side": "P1",
+    "outcome": "LOSS",
+    "winner": "Bot2 (No_Plan_Just_Pra)",
+    "ticks": 1430,
+    "my_af": 0,
+    "opp_af": 0
+  },
+  {
+    "opp": "my-core-bot/bot",
+    "side": "P2",
+    "outcome": "LOSS",
+    "winner": "Bot1 (No_Plan_Just_Pra)",
+    "ticks": 1136,
+    "my_af": 0,
+    "opp_af": 0
+  },
+  {
+    "opp": "monir_bot/bot",
+    "side": "P1",
+    "outcome": "LOSS",
+    "winner": "Bot2 (Draft)",
+    "ticks": 1611,
+    "my_af": 0,
+    "opp_af": 0
+  },
+  {
+    "opp": "monir_bot/bot",
+    "side": "P2",
+    "outcome": "WIN",
+    "winner": "Bot2 (No_Plan_Just_Pra)",
+    "ticks": 1362,
+    "my_af": 0,
+    "opp_af": 1
+  },
+  {
+    "opp": "bots/track1_gemini_evolution/bot",
+    "side": "P1",
+    "outcome": "WIN",
+    "winner": "Bot1 (No_Plan_Just_Pra)",
+    "ticks": 1461,
+    "my_af": 0,
+    "opp_af": 0
+  },
+  {
+    "opp": "bots/track1_gemini_evolution/bot",
+    "side": "P2",
+    "outcome": "WIN",
+    "winner": "Bot2 (No_Plan_Just_Pra)",
+    "ticks": 1159,
+    "my_af": 0,
+    "opp_af": 0
+  }
+]

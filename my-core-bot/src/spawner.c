@@ -24,13 +24,28 @@ static void spawn_brawler_or_hunter(t_obj *core, unsigned long gems, unsigned in
 	bool emergency)
 {
 	(void)n_hunters;
-	(void)emergency;
-	// Primary Meta Fighter: 22 HP, 3-tick cooldown, 3 DMG (307 gems)
-	// Never waste gems on inferior fighters that feed the opponent's army
+	// 1. Primary Apex Fighter: 22 HP, 3 CD (307g)
 	if (gems >= COST_BRAWLER_HEAVY)
 	{
 		safe_create_unit(core, "Hunter", COST_BRAWLER_HEAVY, "combat", "health",
 			"health", "health", "speed", "speed");
+		return;
+	}
+	// 2. High-Grade Fighter: 16 HP, 3 CD (267g) in emergency or after tick 600
+	if (emergency || game.elapsed_ticks > 600)
+	{
+		if (gems >= 267)
+		{
+			safe_create_unit(core, "Hunter", 267, "combat", "health",
+				"health", "speed", "speed", NULL);
+			return;
+		}
+	}
+	// 3. Emergency Fast Guard: 10 HP, 3 CD (227g) under critical emergency
+	if (emergency && gems >= 227)
+	{
+		safe_create_unit(core, "Hunter", 227, "combat", "health",
+			"speed", "speed", NULL, NULL);
 		return;
 	}
 }
@@ -56,14 +71,74 @@ void handle_spawner(t_obj *core)
 
 	unsigned int safe_res = ft_count_safe_resources(core->pos);
 	bool threatened = ft_is_core_threatened(core, 6);
+	bool critical_threat = ft_is_core_threatened(core, 3);
 	unsigned long loose = ft_runner_opportunity(core);
 	bool enemy_cleared = ft_enemy_units_cleared();
 	t_obj *opp_core = ft_get_core_opponent();
 	bool open_highway = (opp_core != NULL) ? nav_is_path_to_core_open(core->pos, opp_core->pos) : true;
 
+	// 0A. CRITICAL BASE DEFENSE: If enemy units are within 3 tiles of our Core,
+	// spawn an immediate 3-CD combat defender right next to them to save our Core!
+	if (critical_threat)
+	{
+		if (gems >= COST_BRAWLER_HEAVY)
+		{
+			safe_create_unit(core, "Hunter", COST_BRAWLER_HEAVY, "combat", "health",
+				"health", "health", "speed", "speed");
+			return;
+		}
+		else if (gems >= 267)
+		{
+			safe_create_unit(core, "Hunter", 267, "combat", "health",
+				"health", "speed", "speed", NULL);
+			return;
+		}
+		else if (gems >= 227)
+		{
+			safe_create_unit(core, "Hunter", 227, "combat", "health",
+				"speed", "speed", NULL, NULL);
+			return;
+		}
+		else if (gems >= COST_FAST_SCOUT)
+		{
+			safe_create_unit(core, "Hunter", COST_FAST_SCOUT, "combat", "speed",
+				"speed", NULL, NULL, NULL);
+			return;
+		}
+		return;
+	}
+
+	bool enemy_has_fighter = (ft_count_enemy_combat_units() > 0);
+	bool warrior_rush_incoming = (open_highway && enemy_has_fighter && !g_had_economy && game.elapsed_ticks <= 250);
+
+	// Warrior Rush Defense: If opponent spawned an early fighter on an open highway during opening,
+	// immediately spawn a combat unit to intercept and defend our base!
+	if (warrior_rush_incoming && (n_hunters + n_defenders == 0))
+	{
+		if (gems >= COST_BRAWLER_HEAVY)
+		{
+			safe_create_unit(core, "Hunter", COST_BRAWLER_HEAVY, "combat", "health",
+				"health", "health", "speed", "speed");
+			return;
+		}
+		else if (gems >= 227)
+		{
+			safe_create_unit(core, "Hunter", 227, "combat", "health",
+				"speed", "speed", NULL, NULL);
+			return;
+		}
+		else if (gems >= COST_FAST_SCOUT)
+		{
+			safe_create_unit(core, "Hunter", COST_FAST_SCOUT, "combat", "speed",
+				"speed", NULL, NULL, NULL);
+			return;
+		}
+		return;
+	}
+
 	// 1. Opening Hyper-Runner when corridors connect to loose gems
 	if (!g_had_economy && n_carriers == 0 && n_miners == 0 && loose > 0 &&
-		game.elapsed_ticks <= 350 && !threatened)
+		game.elapsed_ticks <= 350 && !threatened && !warrior_rush_incoming)
 	{
 		if (gems >= COST_RUNNER)
 			safe_create_unit(core, "Carrier", COST_RUNNER, "max_gems",
@@ -80,7 +155,7 @@ void handle_spawner(t_obj *core)
 	}
 
 	// 3. Ensure at least 1 Carrier is active whenever loose gems exist
-	if (n_carriers < 1 && loose > 0)
+	if (n_carriers < 1 && loose > 0 && !(warrior_rush_incoming && (n_hunters + n_defenders == 0)))
 	{
 		if (gems >= COST_RUNNER)
 		{
@@ -97,7 +172,7 @@ void handle_spawner(t_obj *core)
 	}
 
 	// 4. First Fast Digger (or solo Miner if no Carrier exists)
-	if (n_miners < 1 && safe_res > 0)
+	if (n_miners < 1 && safe_res > 0 && !(warrior_rush_incoming && (n_hunters + n_defenders == 0)))
 	{
 		if (n_carriers > 0 && gems >= COST_DIGGER)
 			safe_create_unit(core, "Miner", COST_DIGGER, "demolition", "speed",
@@ -111,7 +186,9 @@ void handle_spawner(t_obj *core)
 	}
 
 	// 5. Second Fast Digger once we have attacked (at least 1 Hunter built) and 2+ safe deposits exist
-	if (n_miners == 1 && n_carriers > 0 && g_attacked && safe_res >= 2 &&
+	// or in late-game stalemate (>= 1200 ticks) when n_miners < 1
+	if (((n_miners == 1 && n_carriers > 0 && g_attacked && safe_res >= 2) ||
+		 (n_miners < 1 && game.elapsed_ticks >= 1200)) &&
 		!ft_is_core_threatened(core, 10))
 	{
 		if (gems >= COST_DIGGER)
@@ -120,7 +197,8 @@ void handle_spawner(t_obj *core)
 		return;
 	}
 
-	// 6. Core Finisher once enemy units are cleared and we have Hunters guarding the enemy Core
+	// 6. Core Finisher once enemy units are cleared, OR in late-game stalemate (>= 1200 ticks)
+	// to force decisive Core destruction rather than idling into a 10,000-tick tiebreak!
 	bool core_perimeter_secured = false;
 	if (opp_core)
 	{
@@ -139,7 +217,8 @@ void handle_spawner(t_obj *core)
 			free(own);
 	}
 
-	if (n_hunters >= 1 && enemy_cleared && core_perimeter_secured)
+	bool force_finisher = (game.elapsed_ticks >= 1000 && n_hunters >= 2 && n_strikers < 1);
+	if ((n_hunters >= 1 && enemy_cleared && core_perimeter_secured) || force_finisher)
 	{
 		if (n_strikers < 1)
 		{
@@ -151,13 +230,26 @@ void handle_spawner(t_obj *core)
 					"speed", "speed", "health", NULL);
 				return;
 			}
-			else if (gems >= COST_FINISHER)
+			else if (open_highway && gems >= 222)
+			{
+				safe_create_unit(core, "Striker", 222, "siege", "siege",
+					"speed", "speed", NULL, NULL);
+				return;
+			}
+			else if (gems >= COST_FINISHER && !open_highway)
 			{
 				safe_create_unit(core, "Striker", COST_FINISHER, "siege", "siege",
 					"demolition", "health", NULL, NULL);
 				return;
 			}
-			return;
+			else if (gems >= 187)
+			{
+				safe_create_unit(core, "Striker", 187, "siege", "speed",
+					"speed", NULL, NULL, NULL);
+				return;
+			}
+			if (force_finisher)
+				return;
 		}
 	}
 

@@ -182,6 +182,35 @@ void handle_miners(t_obj *core, t_obj **units)
 			continue;
 		}
 
+		// Dynamic Highway Sapper: When enemy armed units are cleared (or late-game stalemate),
+		// task active Miner to breach highway obstacle to enemy Core before general deposit mining!
+		t_obj *highway_obs = NULL;
+		if ((ft_enemy_units_cleared() || game.elapsed_ticks >= 1200) && opp_core)
+		{
+			if (g_sticky_highway_id != 0)
+			{
+				t_obj *st = core_get_obj_from_id(g_sticky_highway_id);
+				if (st && st->hp > 0 && (st->type == OBJ_WALL || st->type == OBJ_DEPOSIT))
+					highway_obs = st;
+				else
+					g_sticky_highway_id = 0;
+			}
+			if (!highway_obs)
+			{
+				highway_obs = nav_find_highway_obstacle(core->pos, opp_core->pos);
+				if (highway_obs)
+					g_sticky_highway_id = highway_obs->id;
+			}
+			if (highway_obs)
+			{
+				if (ft_is_adjacent(u->pos, highway_obs->pos))
+					core_action_attack(u, highway_obs);
+				else
+					safe_travel(u, highway_obs->pos);
+				continue;
+			}
+		}
+
 		// 4. Find assigned deconflicted resource
 		t_obj *target = ft_get_resource_for_miner(u->pos, core->pos, u->id);
 		if (target)
@@ -193,12 +222,13 @@ void handle_miners(t_obj *core, t_obj **units)
 			continue;
 		}
 
-		// 5. Highway Sapper: clear obstacles blocking the path between Cores
-		t_obj *highway_obs = NULL;
+		// 5. Highway & Flank Sapper: clear highway obstacles and breach safe flank partition walls
+		highway_obs = NULL;
 		if (g_sticky_highway_id != 0)
 		{
 			t_obj *st = core_get_obj_from_id(g_sticky_highway_id);
-			if (st && st->hp > 0 && (st->type == OBJ_WALL || st->type == OBJ_DEPOSIT))
+			if (st && st->hp > 0 && (st->type == OBJ_WALL || st->type == OBJ_DEPOSIT) &&
+				!ft_is_pos_near_armed_enemy(st->pos, 3))
 				highway_obs = st;
 			else
 				g_sticky_highway_id = 0;
@@ -206,6 +236,10 @@ void handle_miners(t_obj *core, t_obj **units)
 		if (!highway_obs && opp_core)
 		{
 			highway_obs = nav_find_highway_obstacle(core->pos, opp_core->pos);
+			if (highway_obs && ft_is_pos_near_armed_enemy(highway_obs->pos, 3))
+				highway_obs = NULL;
+			if (!highway_obs)
+				highway_obs = nav_find_flank_sapper_target(u->pos, core->pos, opp_core->pos);
 			if (highway_obs)
 				g_sticky_highway_id = highway_obs->id;
 		}

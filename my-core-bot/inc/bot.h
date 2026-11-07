@@ -8,6 +8,7 @@
 
 #define MAX_GRID_SIZE 64
 #define MAX_TRACKED_TARGETS 512
+#define INF_DIST (UINT_MAX / 4)
 
 typedef enum e_game_phase
 {
@@ -68,7 +69,9 @@ void nav_compute_finisher_lane(t_pos start, t_pos goal, bool lane[MAX_GRID_SIZE]
 void nav_request_yield(t_pos pos);
 void nav_yield_for_workers(t_obj *core, t_obj *enemy_core, t_obj **units);
 bool ft_enemy_units_cleared(void);
+bool ft_is_perimeter_secured(const t_obj *core, const t_obj *opp_core);
 t_obj *nav_find_highway_obstacle(t_pos start, t_pos goal);
+t_obj *nav_find_flank_sapper_target(t_pos miner_pos, t_pos core_pos, t_pos opp_core_pos);
 bool nav_is_path_to_core_open(t_pos start, t_pos goal);
 
 // Core getters

@@ -150,6 +150,34 @@ static void position_hunter_around_enemy_core(t_obj *u, t_obj *opp_core,
 	unsigned int best_score = UINT_MAX;
 	bool found = false;
 
+	// Orthogonal Pincer Siege: Check if an ally has already claimed a cardinal post around opp_core
+	bool ally_has_cardinal = false;
+	bool ally_cardinal_is_horiz = false; // true if along X axis (same Y as opp_core)
+
+	for (unsigned short cy = 0; cy < game.grid_size && cy < MAX_GRID_SIZE; cy++)
+	{
+		for (unsigned short cx = 0; cx < game.grid_size && cx < MAX_GRID_SIZE; cx++)
+		{
+			if (claimed_posts[cy][cx])
+			{
+				t_pos cp = {cx, cy};
+				if (ft_distance(cp, opp_core->pos) <= 3)
+				{
+					if (cp.y == opp_core->pos.y && cp.x != opp_core->pos.x)
+					{
+						ally_has_cardinal = true;
+						ally_cardinal_is_horiz = true;
+					}
+					else if (cp.x == opp_core->pos.x && cp.y != opp_core->pos.y)
+					{
+						ally_has_cardinal = true;
+						ally_cardinal_is_horiz = false;
+					}
+				}
+			}
+		}
+	}
+
 	for (unsigned short y = 0; y < game.grid_size && y < MAX_GRID_SIZE; y++)
 	{
 		for (unsigned short x = 0; x < game.grid_size && x < MAX_GRID_SIZE; x++)
@@ -165,9 +193,34 @@ static void position_hunter_around_enemy_core(t_obj *u, t_obj *opp_core,
 				continue;
 
 			unsigned int score = (d - 2) * 300 + ft_distance(u->pos, p) * 10;
-			// Prefer cardinal distance-2 posts that cover enemy spawn exits
-			if (d == 2 && (p.x == opp_core->pos.x || p.y == opp_core->pos.y))
+			bool is_cardinal = (d == 2 && (p.x == opp_core->pos.x || p.y == opp_core->pos.y));
+			bool is_horiz = (p.y == opp_core->pos.y && p.x != opp_core->pos.x);
+			bool is_vert = (p.x == opp_core->pos.x && p.y != opp_core->pos.y);
+
+			if (is_cardinal)
+			{
 				score = (score > 100) ? (score - 100) : 0;
+
+				// Orthogonal Pincer Siege: Coordinate with ally to cover orthogonal cardinal exits!
+				if (ally_has_cardinal)
+				{
+					if ((ally_cardinal_is_horiz && is_vert) || (!ally_cardinal_is_horiz && is_horiz))
+					{
+						// Perfect Orthogonal Pincer: One Hunter per cardinal axis!
+						score = (score > 5000) ? (score - 5000) : 0;
+					}
+					else
+					{
+						// Same axis as ally: penalize bunching on the same side
+						score += 2000;
+					}
+				}
+				else
+				{
+					// First hunter to claim a cardinal post gets strong preference
+					score = (score > 500) ? (score - 500) : 0;
+				}
+			}
 
 			if (score < best_score)
 			{
@@ -239,8 +292,13 @@ static void handle_hunter_or_scout(t_obj *u, t_obj *core, t_obj *opp_core,
 			priority += 250 + (long)(e->s_unit.gems * 2);
 		else if (dist_me <= 5)
 			priority += 500;
-		if (core && dist_core <= 6 && dist_me <= 10 && !is_unarmed)
-			priority += 5000;
+		// DEFEND CORE: Any armed enemy or Core-damaging enemy near our Core is maximum priority!
+		if (core && dist_core <= 6 && (!is_unarmed || e->s_unit.properties.damage_core > 0))
+		{
+			priority += 15000 - (long)(dist_me * 25);
+			if (dist_core <= 2)
+				priority += 10000;
+		}
 		if (opp_core && core_get_units_byName_count("Striker") > 0 &&
 			ft_distance(e->pos, opp_core->pos) <= 2)
 		{
@@ -380,8 +438,8 @@ void handle_combat(t_obj *core, t_obj *opp_core, t_obj **units)
 		nav_compute_finisher_lane(lane_start, opp_core->pos, finisher_lane);
 	}
 
-	// Run Strikers FIRST when enemy units are cleared so they claim the approach tile
-	if (ft_enemy_units_cleared())
+	// Run Strikers FIRST when enemy units are cleared or in late-game so they claim the approach tile
+	if (ft_enemy_units_cleared() || game.elapsed_ticks >= 1200)
 	{
 		for (int i = 0; units && units[i]; i++)
 		{

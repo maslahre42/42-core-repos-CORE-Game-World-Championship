@@ -227,19 +227,6 @@ void step_away_from_core(const t_obj *u, t_obj *core)
 		core_action_move(u, best_step);
 }
 
-static bool is_p1_team(void)
-{
-	t_obj *core = ft_get_core_own();
-	t_obj *opp = ft_get_core_opponent();
-	if (core && opp)
-	{
-		if (core->pos.x == 0 && core->pos.y == 0)
-			return true;
-		if (core->id < opp->id)
-			return true;
-	}
-	return (game.my_team_id == 42);
-}
 
 void __wrap_core_action_move(const t_obj *unit, t_pos pos)
 {
@@ -265,12 +252,15 @@ void __wrap_core_action_move(const t_obj *unit, t_pos pos)
 					return;
 			}
 			// Contest Prevention: if enemy is ready to move into pos this tick,
-			// yield to prevent simultaneous-step collision Action Failures:
-			if (e->s_unit.action_cooldown <= 0 && ft_distance(pos, e->pos) <= 1)
+			// yield to prevent simultaneous-step collision Action Failures.
+			// Workers always yield to avoid armed enemies.
+			// Combat units yield if the enemy is in transit (cooldown == 0) to avoid corridor collisions;
+			// this pauses for at most 1 tick to let the enemy walk into melee range (free first strike!).
+			if (ft_distance(pos, e->pos) <= 1)
 			{
-				if (unit->s_unit.properties.damage_unit == 0)
+				if (unit->s_unit.properties.damage_unit == 0 && e->s_unit.action_cooldown <= 0)
 					return;
-				if (!is_p1_team())
+				if (unit->s_unit.properties.damage_unit > 0 && e->s_unit.action_cooldown == 0)
 					return;
 			}
 		}
@@ -332,9 +322,10 @@ void __wrap_core_action_attack(const t_obj *attacker, const t_obj *target)
 	if (t->type != OBJ_GEM_PILE && t->hp <= get_pending_damage(t->id))
 		return;
 
-	// Tie-breaker deconfliction: if opponent executes before us (!is_p1_team()),
-	// check if adjacent enemies will destroy the object this tick before our attack executes!
-	if (!is_p1_team() && (t->type == OBJ_DEPOSIT || t->type == OBJ_WALL))
+	// Tie-breaker deconfliction: if adjacent enemies can destroy the deposit/wall this tick,
+	// do NOT attack! Server shuffles actions per tick, so enemy attack may execute first,
+	// destroying the target and causing an Action Failure on our attack.
+	if (t->type == OBJ_DEPOSIT || t->type == OBJ_WALL)
 	{
 		unsigned long enemy_pending_dmg = 0;
 		for (int i = 0; game.objects && game.objects[i]; i++)
@@ -532,9 +523,16 @@ t_tile_travelability safe_travelability(t_pos pos, const t_obj *unit)
 	{
 		if (obj->s_unit.team_id == game.my_team_id)
 		{
-			// BUG #6 FIX: Only block immediate next step (distance 1).
-			// Friendly units at distance >= 2 will vacate future corridor tiles!
-			if (unit && ft_distance(unit->pos, pos) <= 1)
+			// Optimize worker delivery paths:
+			// Friendly combat units can step aside (yield)!
+			// Unarmed workers (Carriers, Miners) can path through them rather than getting permanently blocked.
+			if (unit && unit->s_unit.properties.damage_unit == 0 &&
+				obj->s_unit.properties.damage_unit > 0)
+			{
+				res.weight = 15;
+				res.action = CORE_TRAVEL_PASS;
+			}
+			else if (unit && ft_distance(unit->pos, pos) <= 1)
 			{
 				res.weight = 10000;
 				res.action = CORE_TRAVEL_BLOCK;
@@ -623,8 +621,6 @@ void safe_travel(const t_obj *u, t_pos target)
 			core_action_move(u, best_step);
 	}
 }
-
-#define INF_DIST (UINT_MAX / 4)
 
 void nav_compute_corridor_distances(t_pos start, unsigned int dist[MAX_GRID_SIZE][MAX_GRID_SIZE],
 									bool is_unarmed, unsigned long ignore_id)
@@ -930,10 +926,6 @@ void nav_yield_for_workers(t_obj *core, t_obj *enemy_core, t_obj **units)
 		if (!requested && !blocking_spawn)
 			continue;
 
-		// Combat Priority: NEVER yield corridor if an armed enemy is within 6 tiles!
-		if (ft_is_pos_near_armed_enemy(u->pos, 6))
-			continue;
-
 		// Fight adjacent enemies instead of giving up an active interception!
 		if (ft_get_best_adjacent_enemy(u) != NULL)
 			continue;
@@ -950,6 +942,9 @@ void nav_yield_for_workers(t_obj *core, t_obj *enemy_core, t_obj **units)
 				continue;
 			t_pos p = {(unsigned short)nx, (unsigned short)ny};
 			if (is_tile_occupied(p))
+				continue;
+			// Never yield directly into enemy melee range!
+			if (ft_is_pos_near_armed_enemy(p, 1))
 				continue;
 
 			unsigned int score = (enemy_core ? ft_distance(p, enemy_core->pos) : 0);
@@ -1093,4 +1088,69 @@ t_obj *nav_find_highway_obstacle(t_pos start, t_pos goal)
 bool nav_is_path_to_core_open(t_pos start, t_pos goal)
 {
 	return (nav_find_highway_obstacle(start, goal) == NULL);
+}
+
+t_obj *nav_find_flank_sapper_target(t_pos miner_pos, t_pos core_pos, t_pos opp_core_pos)
+{
+	(void)core_pos;
+	t_obj *best_wall = NULL;
+	long best_score = LONG_MIN;
+
+	for (int i = 0; game.objects && game.objects[i]; i++)
+	{
+		t_obj *o = game.objects[i];
+		if (!o || o->hp == 0 || (o->type != OBJ_WALL && o->type != OBJ_DEPOSIT))
+			continue;
+
+		// Strictly reject any obstacle within 3 tiles of an armed enemy!
+		if (ft_is_pos_near_armed_enemy(o->pos, 3))
+			continue;
+
+		// Strictly reject obstacles in the contested center choke point
+		if (abs((int)o->pos.x - (int)game.grid_size / 2) <= 2 &&
+			abs((int)o->pos.y - (int)game.grid_size / 2) <= 2)
+			continue;
+
+		unsigned int dist_m = ft_distance(miner_pos, o->pos);
+		unsigned int dist_opp = ft_distance(opp_core_pos, o->pos);
+
+		long score = 1000 - (long)(dist_m * 15) - (long)(dist_opp * 10);
+
+		// Prioritize walled Deposits with gems: huge economic and net worth value
+		if (o->type == OBJ_DEPOSIT && o->s_deposit_gems_pile.gems > 0)
+			score += 15000;
+
+		// Prioritize walls along the flanks (outer 4 rows or columns)
+		bool is_flank = (o->pos.x <= 4 || o->pos.x + 4 >= game.grid_size ||
+						 o->pos.y <= 4 || o->pos.y + 4 >= game.grid_size);
+		if (is_flank)
+			score += 10000;
+
+		// Partition walls (open space on opposite sides)
+		bool horiz_partition = false;
+		if (o->pos.x > 0 && o->pos.x + 1 < game.grid_size)
+		{
+			t_pos l = {(unsigned short)(o->pos.x - 1), o->pos.y};
+			t_pos r = {(unsigned short)(o->pos.x + 1), o->pos.y};
+			if (!core_get_obj_from_pos(l) && !core_get_obj_from_pos(r))
+				horiz_partition = true;
+		}
+		bool vert_partition = false;
+		if (o->pos.y > 0 && o->pos.y + 1 < game.grid_size)
+		{
+			t_pos u = {o->pos.x, (unsigned short)(o->pos.y - 1)};
+			t_pos d = {o->pos.x, (unsigned short)(o->pos.y + 1)};
+			if (!core_get_obj_from_pos(u) && !core_get_obj_from_pos(d))
+				vert_partition = true;
+		}
+		if (horiz_partition || vert_partition)
+			score += 8000;
+
+		if (score > best_score)
+		{
+			best_score = score;
+			best_wall = o;
+		}
+	}
+	return best_wall;
 }
